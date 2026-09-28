@@ -11,6 +11,7 @@ from src.data import fetch_ohlcv
 from src.direction_regime_study import run_direction_regime_study
 from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
+from src.entry_quality_lab import run_entry_quality_lab
 from src.event_edge_study import run_event_edge_study
 from src.execution_reality import run_execution_reality_check
 from src.exit_surface import run_exit_surface
@@ -95,7 +96,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.1")
+st.title("Crypto Scalping Lab v2.2")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -2031,6 +2032,134 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("1m Entry Quality Lab · v2.2")
+st.caption(
+    "v2.1 showed that changing exits did not rescue the signal. This lab freezes the 10-minute exit "
+    "and asks a cleaner question: do stronger pre-entry conditions improve expectancy? "
+    "All quality filters use only information known before the 1m entry."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The entry-quality lab uses the same historical selections.")
+else:
+    eq1, eq2, eq3 = st.columns(3)
+    with eq1:
+        entry_quality_periods = st.select_slider(
+            "Periods to study",
+            options=[4, 8, 12],
+            value=12,
+            key="entry_quality_periods",
+        )
+    with eq2:
+        entry_quality_fee = st.number_input(
+            "Entry-quality fee per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=4.0,
+            step=0.5,
+            key="entry_quality_fee",
+        )
+    with eq3:
+        entry_quality_slippage = st.number_input(
+            "Entry-quality slippage per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=2.0,
+            step=0.5,
+            key="entry_quality_slippage",
+        )
+
+    entry_quality_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(entry_quality_periods),
+        float(entry_quality_fee),
+        float(entry_quality_slippage),
+    )
+
+    run_entry_quality = st.button(
+        "Run 1m entry-quality lab",
+        use_container_width=True,
+        key="run_entry_quality_lab",
+    )
+
+    if run_entry_quality:
+        with st.spinner(
+            "Testing baseline, strong 1m confirmation, strong 5m event and dual-strong subsets..."
+        ):
+            try:
+                entry_quality_summary, entry_quality_details = run_entry_quality_lab(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(entry_quality_fee),
+                    slippage_bps=float(entry_quality_slippage),
+                    max_periods=int(entry_quality_periods),
+                )
+                st.session_state["entry_quality_summary"] = entry_quality_summary
+                st.session_state["entry_quality_details"] = entry_quality_details
+                st.session_state["entry_quality_signature"] = entry_quality_signature
+            except Exception as exc:
+                st.error(f"1m Entry Quality Lab failed: {exc}")
+
+    entry_quality_summary = st.session_state.get("entry_quality_summary")
+    entry_quality_details = st.session_state.get("entry_quality_details")
+    saved_entry_quality_signature = st.session_state.get("entry_quality_signature")
+
+    if entry_quality_summary is not None:
+        if saved_entry_quality_signature != entry_quality_signature:
+            st.info("Entry-quality settings changed. Run it again to refresh the results.")
+        else:
+            shown_entry_quality = entry_quality_summary.copy()
+            for col in [
+                "Gross avg bps",
+                "Gross median bps",
+                "Trimmed gross avg bps",
+                "Net avg bps",
+                "Net median bps",
+                "Net positive events %",
+                "Worst period avg bps",
+                "Best period avg bps",
+                "Avg 1m confirm vol",
+                "Avg 1m body bps",
+                "Avg 5m event vol",
+                "Avg 5m relative / ATR",
+                "Round-trip cost bps",
+            ]:
+                if col in shown_entry_quality:
+                    shown_entry_quality[col] = shown_entry_quality[col].round(2)
+
+            st.dataframe(
+                shown_entry_quality,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Do not choose a tier only because it has the highest mean. We want enough events across many periods, "
+                "positive trimmed gross above costs, and a median/period profile that improves together. "
+                "If a tiny Dual-strong sample looks spectacular, treat it as exploratory until an older holdout confirms it."
+            )
+
+            if entry_quality_details is not None and not entry_quality_details.empty:
+                with st.expander("Entry-quality event details"):
+                    shown_entry_details = entry_quality_details.copy()
+                    for col in [
+                        "Gross bps",
+                        "Net bps",
+                        "1m confirm volume ratio",
+                        "1m confirm body bps",
+                        "5m volume ratio",
+                        "5m range / ATR",
+                        "5m relative move / ATR",
+                        "Breadth",
+                    ]:
+                        if col in shown_entry_details:
+                            shown_entry_details[col] = shown_entry_details[col].round(2)
+                    st.dataframe(
+                        shown_entry_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -2621,7 +2750,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v2.1 logic and backtest assumptions"):
+with st.expander("v2.2 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
