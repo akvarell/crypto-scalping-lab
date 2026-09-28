@@ -12,6 +12,7 @@ from src.execution_reality import run_execution_reality_check
 from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
+from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.rolling_universe import run_rolling_universe_validation
 from src.strategy import generate_signals
@@ -87,7 +88,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.3")
+st.title("Crypto Scalping Lab v1.4")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -998,6 +999,135 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("One-Shot Signal Lab · v1.4")
+st.caption(
+    "The v1.3 audit showed that Mean Reversion still has positive gross edge but excessive turnover. "
+    "This lab removes repeated entries during the same extreme move: a new signal appears only when "
+    "price first crosses into the extreme zone. Additional variants require a volume spike and/or a "
+    "large candle relative to ATR. All entries still execute at the next 5-minute bar open."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The one-shot lab uses the same historical selections.")
+else:
+    os1, os2, os3 = st.columns(3)
+    with os1:
+        one_shot_periods = st.select_slider(
+            "Periods to test",
+            options=[4, 8, 12],
+            value=12,
+            key="one_shot_periods",
+        )
+    with os2:
+        st.metric("Fee per side", f"{float(scalp_fee_bps):.1f} bps")
+    with os3:
+        st.metric("Slippage per side", f"{float(scalp_slippage_bps):.1f} bps")
+
+    one_shot_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(one_shot_periods),
+        float(scalp_fee_bps),
+        float(scalp_slippage_bps),
+    )
+
+    run_one_shot = st.button(
+        "Run one-shot signal lab",
+        use_container_width=True,
+        key="run_one_shot_lab",
+    )
+
+    if run_one_shot:
+        with st.spinner(
+            "Testing one entry per extreme impulse, with volume and capitulation filters..."
+        ):
+            try:
+                one_shot_summary, one_shot_period_table, one_shot_details = run_one_shot_lab(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(scalp_fee_bps),
+                    slippage_bps=float(scalp_slippage_bps),
+                    max_periods=int(one_shot_periods),
+                )
+                st.session_state["one_shot_summary"] = one_shot_summary
+                st.session_state["one_shot_period_table"] = one_shot_period_table
+                st.session_state["one_shot_details"] = one_shot_details
+                st.session_state["one_shot_signature"] = one_shot_signature
+            except Exception as exc:
+                st.error(f"One-shot signal lab failed: {exc}")
+
+    one_shot_summary = st.session_state.get("one_shot_summary")
+    one_shot_period_table = st.session_state.get("one_shot_period_table")
+    one_shot_details = st.session_state.get("one_shot_details")
+    saved_one_shot_signature = st.session_state.get("one_shot_signature")
+
+    if one_shot_summary is not None:
+        if saved_one_shot_signature != one_shot_signature:
+            st.info("One-shot settings changed. Run the lab again to refresh the results.")
+        else:
+            shown_one_shot = one_shot_summary.copy()
+            for col in [
+                "Avg gross return %",
+                "Avg net return %",
+                "Median net return %",
+                "Compounded net %",
+                "Avg cost drag pp",
+                "Worst period %",
+                "Best period %",
+                "Avg trade %",
+                "Avg net PF",
+            ]:
+                if col in shown_one_shot:
+                    shown_one_shot[col] = shown_one_shot[col].round(3)
+
+            st.dataframe(
+                shown_one_shot,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "The key comparison is turnover versus retained gross edge. A useful one-shot variant "
+                "should cut trades and cost drag sharply without destroying gross return."
+            )
+
+            if one_shot_period_table is not None and not one_shot_period_table.empty:
+                with st.expander("One-shot weekly portfolio results"):
+                    shown_one_shot_periods = one_shot_period_table.copy()
+                    for col in [
+                        "Gross portfolio return %",
+                        "Net portfolio return %",
+                        "Cost drag pp",
+                        "Avg trade %",
+                    ]:
+                        if col in shown_one_shot_periods:
+                            shown_one_shot_periods[col] = shown_one_shot_periods[col].round(3)
+                    st.dataframe(
+                        shown_one_shot_periods,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            if one_shot_details is not None and not one_shot_details.empty:
+                with st.expander("One-shot per-coin results"):
+                    shown_one_shot_details = one_shot_details.copy()
+                    for col in [
+                        "Gross return %",
+                        "Net return %",
+                        "Cost drag pp",
+                        "Gross PF",
+                        "Net PF",
+                        "Win rate %",
+                        "Max DD %",
+                        "Avg trade %",
+                    ]:
+                        if col in shown_one_shot_details:
+                            shown_one_shot_details[col] = shown_one_shot_details[col].round(3)
+                    st.dataframe(
+                        shown_one_shot_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -1588,7 +1718,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.3 logic and backtest assumptions"):
+with st.expander("v1.4 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
