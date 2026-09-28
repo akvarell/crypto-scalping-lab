@@ -11,13 +11,13 @@ from src.backtest import run_backtest
 st.set_page_config(page_title="Crypto Scalping Lab", page_icon="📈", layout="wide")
 
 st.title("Crypto Scalping Lab v0.1")
-st.caption("Research and backtesting dashboard. No order execution and no exchange API keys required.")
+st.caption("Research/backtesting only · Public Kraken market data · No API keys or order execution.")
 
 with st.sidebar:
     st.header("Market")
-    symbol = st.selectbox("Symbol", ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"], index=0)
-    timeframe = st.selectbox("Timeframe", ["1m", "3m", "5m", "15m", "30m", "1h"], index=2)
-    limit = st.slider("Candles", 200, 1500, 600, 100)
+    symbol = st.selectbox("Symbol", ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"], index=0)
+    timeframe = st.selectbox("Timeframe", ["1m", "5m", "15m", "30m", "1h"], index=1)
+    limit = st.slider("Candles", 200, 700, 500, 50)
 
     st.header("Strategy")
     ema_fast = st.number_input("Fast EMA", min_value=2, max_value=100, value=9, step=1)
@@ -31,7 +31,6 @@ with st.sidebar:
     fee_bps = st.number_input("Fee per side, bps", min_value=0.0, max_value=100.0, value=4.0, step=0.5)
     slippage_bps = st.number_input("Slippage per side, bps", min_value=0.0, max_value=100.0, value=1.0, step=0.5)
     start_cash = st.number_input("Starting capital", min_value=100.0, value=10000.0, step=100.0)
-
     refresh = st.button("Load / Refresh", type="primary", use_container_width=True)
 
 if ema_fast >= ema_slow:
@@ -61,7 +60,6 @@ params = {
     "rsi_short": int(rsi_short),
     "atr_period": int(atr_period),
 }
-
 df = add_indicators(df, **params)
 df = generate_signals(df, rsi_long=int(rsi_long), rsi_short=int(rsi_short))
 results = run_backtest(
@@ -95,21 +93,13 @@ longs = df[df["signal"] == 1]
 shorts = df[df["signal"] == -1]
 if not longs.empty:
     fig.add_trace(go.Scatter(
-        x=longs.index,
-        y=longs["low"] * 0.999,
-        mode="markers",
-        marker_symbol="triangle-up",
-        marker_size=10,
-        name="Long signal",
+        x=longs.index, y=longs["low"] * 0.999, mode="markers",
+        marker_symbol="triangle-up", marker_size=10, name="Long signal",
     ))
 if not shorts.empty:
     fig.add_trace(go.Scatter(
-        x=shorts.index,
-        y=shorts["high"] * 1.001,
-        mode="markers",
-        marker_symbol="triangle-down",
-        marker_size=10,
-        name="Short signal",
+        x=shorts.index, y=shorts["high"] * 1.001, mode="markers",
+        marker_symbol="triangle-down", marker_size=10, name="Short signal",
     ))
 
 fig.update_layout(
@@ -138,7 +128,11 @@ if trades.empty:
     st.info("No completed trades for the selected period and parameters.")
 else:
     display_cols = ["entry_time", "exit_time", "side", "entry_price", "exit_price", "pnl", "return_pct"]
-    st.dataframe(trades[display_cols].sort_values("exit_time", ascending=False), use_container_width=True, hide_index=True)
+    st.dataframe(
+        trades[display_cols].sort_values("exit_time", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 with st.expander("How the v0.1 signal works"):
     st.write(
