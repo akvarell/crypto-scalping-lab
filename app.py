@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.alt_basket_study import run_alt_basket_study
 from src.backtest import run_backtest
 from src.data import fetch_ohlcv
 from src.direction_regime_study import run_direction_regime_study
@@ -91,7 +92,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.7")
+st.title("Crypto Scalping Lab v1.8")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -1473,6 +1474,113 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("Alt-Basket Relative Study · v1.8")
+st.caption(
+    "BTC is no longer used as the market regime reference here. For each coin, context is built from "
+    "the OTHER selected active alts in that historical period: basket breadth, basket 60-minute return, "
+    "basket activity and the coin's relative move versus that alt basket."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The alt-basket study uses those historical selections.")
+else:
+    ab1, ab2, ab3 = st.columns(3)
+    with ab1:
+        alt_basket_periods = st.select_slider(
+            "Periods to study",
+            options=[4, 8, 12],
+            value=12,
+            key="alt_basket_periods",
+        )
+    with ab2:
+        st.metric("Round-trip cost", f"{2 * (float(scalp_fee_bps) + float(scalp_slippage_bps)):.1f} bps")
+    with ab3:
+        st.metric("Reference market", "Selected alt basket")
+
+    alt_basket_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(alt_basket_periods),
+        float(scalp_fee_bps),
+        float(scalp_slippage_bps),
+    )
+
+    run_alt_basket = st.button(
+        "Run alt-basket relative study",
+        use_container_width=True,
+        key="run_alt_basket_study",
+    )
+
+    if run_alt_basket:
+        with st.spinner(
+            "Building cross-sectional alt breadth and measuring breakout events relative to the alt basket..."
+        ):
+            try:
+                alt_basket_summary, alt_basket_details = run_alt_basket_study(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(scalp_fee_bps),
+                    slippage_bps=float(scalp_slippage_bps),
+                    max_periods=int(alt_basket_periods),
+                )
+                st.session_state["alt_basket_summary"] = alt_basket_summary
+                st.session_state["alt_basket_details"] = alt_basket_details
+                st.session_state["alt_basket_signature"] = alt_basket_signature
+            except Exception as exc:
+                st.error(f"Alt-basket relative study failed: {exc}")
+
+    alt_basket_summary = st.session_state.get("alt_basket_summary")
+    alt_basket_details = st.session_state.get("alt_basket_details")
+    saved_alt_basket_signature = st.session_state.get("alt_basket_signature")
+
+    if alt_basket_summary is not None:
+        if saved_alt_basket_signature != alt_basket_signature:
+            st.info("Alt-basket study settings changed. Run it again to refresh the results.")
+        else:
+            shown_alt_basket = alt_basket_summary.copy()
+            for col in [
+                "Gross avg bps",
+                "Gross median bps",
+                "Net avg bps",
+                "Net positive events %",
+                "Round-trip cost bps",
+                "Gross edge / cost",
+            ]:
+                if col in shown_alt_basket:
+                    shown_alt_basket[col] = shown_alt_basket[col].round(2)
+
+            st.dataframe(
+                shown_alt_basket,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "This is the cleaner test for your idea: the coin is judged versus other currently active alts, "
+                "not versus BTC. A potentially useful row should have enough events across multiple periods and "
+                "gross average bps comfortably above the cost line."
+            )
+
+            if alt_basket_details is not None and not alt_basket_details.empty:
+                with st.expander("Alt-basket event details"):
+                    shown_alt_details = alt_basket_details.copy()
+                    for col in [
+                        "Gross bps",
+                        "Net bps",
+                        "Breadth",
+                        "Basket 60m return %",
+                        "Basket volume ratio",
+                        "Coin volume ratio",
+                        "Range / ATR",
+                        "Relative move / ATR",
+                    ]:
+                        if col in shown_alt_details:
+                            shown_alt_details[col] = shown_alt_details[col].round(2)
+                    st.dataframe(
+                        shown_alt_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -2063,7 +2171,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.7 logic and backtest assumptions"):
+with st.expander("v1.8 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
