@@ -9,9 +9,9 @@ from src.indicators import add_indicators
 from src.strategy import generate_signals
 
 
-def _score(metrics: dict, objective: str) -> float:
+def _score(metrics: dict, objective: str, min_train_trades: int) -> float:
     trades = int(metrics["trades"])
-    if trades < 4:
+    if trades < int(min_train_trades):
         return -1_000_000.0 + trades
 
     ret = float(metrics["net_return_pct"])
@@ -20,12 +20,12 @@ def _score(metrics: dict, objective: str) -> float:
     pf = 5.0 if math.isinf(pf_raw) else min(pf_raw, 5.0)
 
     if objective == "Net return":
-        return ret - 0.15 * dd
+        return ret - 0.20 * dd
     if objective == "Profit factor":
-        return pf + 0.02 * ret - 0.02 * dd
+        return pf + 0.02 * ret - 0.03 * dd
 
-    # Balanced is a heuristic, not a trading recommendation.
-    return ret - 0.60 * dd + 0.75 * (pf - 1.0) + 0.01 * min(trades, 20)
+    # Balanced is a research heuristic, not a trading recommendation.
+    return ret - 0.70 * dd + 0.80 * (pf - 1.0) + 0.005 * min(trades, 100)
 
 
 def optimize_quick(
@@ -41,9 +41,11 @@ def optimize_quick(
     start_cash: float,
     fee_bps: float,
     slippage_bps: float,
+    min_train_trades: int = 20,
+    min_test_trades: int = 10,
     top_n: int = 8,
 ) -> pd.DataFrame:
-    """Coarse parameter search on TRAIN only, followed by TEST evaluation of top TRAIN rows."""
+    """Rank on TRAIN only and report TEST without using TEST for ranking."""
 
     fast_values = [5, 9, 13]
     slow_values = [21, 34, 55]
@@ -95,6 +97,7 @@ def optimize_quick(
             take_atr=float(take_atr),
         )
         m = result["metrics"]
+        train_trades = int(m["trades"])
 
         train_rows.append(
             {
@@ -108,8 +111,9 @@ def optimize_quick(
                 "Train return %": float(m["net_return_pct"]),
                 "Train PF": float(m["profit_factor"]),
                 "Train DD %": float(m["max_drawdown_pct"]),
-                "Train trades": int(m["trades"]),
-                "Score": _score(m, objective),
+                "Train trades": train_trades,
+                "Train sample": "OK" if train_trades >= int(min_train_trades) else "LOW SAMPLE",
+                "Score": _score(m, objective, int(min_train_trades)),
             }
         )
 
@@ -149,15 +153,16 @@ def optimize_quick(
             take_atr=float(row["Take ATR"]),
         )
         m = result["metrics"]
+        test_trades = int(m["trades"])
         test_rows.append(
             {
                 "Test return %": float(m["net_return_pct"]),
                 "Test PF": float(m["profit_factor"]),
                 "Test DD %": float(m["max_drawdown_pct"]),
-                "Test trades": int(m["trades"]),
+                "Test trades": test_trades,
                 "Test win %": float(m["win_rate_pct"]),
+                "Test sample": "OK" if test_trades >= int(min_test_trades) else "LOW SAMPLE",
             }
         )
 
-    test_df = pd.DataFrame(test_rows)
-    return pd.concat([ranked, test_df], axis=1)
+    return pd.concat([ranked, pd.DataFrame(test_rows)], axis=1)
