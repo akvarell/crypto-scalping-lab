@@ -8,6 +8,7 @@ from src.backtest import run_backtest
 from src.data import fetch_ohlcv
 from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
+from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.optimizer import optimize_quick
 from src.strategy import generate_signals
 from src.walkforward import evaluate_walk_forward
@@ -81,7 +82,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v0.6")
+st.title("Crypto Scalping Lab v0.7")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -493,6 +494,116 @@ if family_summary is not None:
                         shown_family_details[col] = shown_family_details[col].round(2)
                 st.dataframe(shown_family_details, use_container_width=True, hide_index=True)
 
+st.subheader("Mean Reversion Lab · v0.7")
+st.caption(
+    "Mean Reversion was the only v0.6 family with 2/3 positive folds and PF above 1 on average, "
+    "but one bad fold erased most of the gain. These four fixed variants diagnose whether waiting "
+    "for a reclaim and avoiding strong-trend/high-volatility regimes improves robustness. "
+    "Because v0.6 already influenced this choice, these folds are development data, not a final untouched holdout."
+)
+
+mr1, mr2, mr3 = st.columns(3)
+with mr1:
+    mr_folds = st.slider(
+        "MR folds",
+        min_value=2,
+        max_value=5,
+        value=3,
+        step=1,
+        key="mr_folds",
+    )
+with mr2:
+    mr_calibration_pct = st.slider(
+        "MR calibration share",
+        min_value=25,
+        max_value=60,
+        value=40,
+        step=5,
+        key="mr_calibration_pct",
+    )
+with mr3:
+    mr_min_trades = st.number_input(
+        "Minimum MR trades per fold",
+        min_value=3,
+        max_value=50,
+        value=8,
+        step=1,
+        key="mr_min_trades",
+    )
+
+mr_signature = (
+    symbol,
+    timeframe,
+    int(limit),
+    int(rsi_period),
+    int(atr_period),
+    float(start_cash),
+    float(fee_bps),
+    float(slippage_bps),
+    int(mr_folds),
+    int(mr_calibration_pct),
+    int(mr_min_trades),
+)
+
+run_mr_lab = st.button(
+    "Run Mean Reversion Lab",
+    use_container_width=True,
+    key="run_mr_lab",
+)
+
+if run_mr_lab:
+    with st.spinner("Testing fixed Mean Reversion variants across sequential folds..."):
+        mr_summary, mr_details = evaluate_mean_reversion_variants(
+            raw_df,
+            folds=int(mr_folds),
+            calibration_pct=int(mr_calibration_pct),
+            rsi_period=int(rsi_period),
+            atr_period=int(atr_period),
+            start_cash=float(start_cash),
+            fee_bps=float(fee_bps),
+            slippage_bps=float(slippage_bps),
+            min_fold_trades=int(mr_min_trades),
+        )
+        st.session_state["mr_summary"] = mr_summary
+        st.session_state["mr_details"] = mr_details
+        st.session_state["mr_signature"] = mr_signature
+
+mr_summary = st.session_state.get("mr_summary")
+mr_details = st.session_state.get("mr_details")
+saved_mr_signature = st.session_state.get("mr_signature")
+
+if mr_summary is not None:
+    if saved_mr_signature != mr_signature:
+        st.info("Mean Reversion Lab settings changed. Run it again to refresh the table.")
+    else:
+        shown_mr = mr_summary.copy()
+        for col in [
+            "Median return %",
+            "Average return %",
+            "Worst fold %",
+            "Best fold %",
+            "Average PF",
+            "Worst DD %",
+            "Long P&L",
+            "Short P&L",
+        ]:
+            if col in shown_mr:
+                shown_mr[col] = shown_mr[col].round(2)
+
+        st.dataframe(shown_mr, use_container_width=True, hide_index=True)
+        st.caption(
+            "Focus on repeatability: multiple positive folds, enough trades, and whether one side "
+            "(LONG or SHORT) is responsible for most of the losses."
+        )
+
+        if mr_details is not None:
+            with st.expander("Mean Reversion fold details"):
+                shown_mr_details = mr_details.copy()
+                for col in ["Return %", "PF", "DD %", "Long P&L", "Short P&L"]:
+                    if col in shown_mr_details:
+                        shown_mr_details[col] = shown_mr_details[col].round(2)
+                st.dataframe(shown_mr_details, use_container_width=True, hide_index=True)
+
 st.subheader("Parameter optimizer")
 st.caption(
     "Quick search ranks combinations using TRAIN only, then reports TEST results without "
@@ -751,7 +862,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v0.6 logic and backtest assumptions"):
+with st.expander("v0.7 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
