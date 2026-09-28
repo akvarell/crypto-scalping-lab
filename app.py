@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.alt_basket_study import run_alt_basket_study
 from src.backtest import run_backtest
+from src.counter_regime_holdout import run_counter_regime_holdout
 from src.data import fetch_ohlcv
 from src.direction_regime_study import run_direction_regime_study
 from src.dynamic_scalping import run_dynamic_universe_scalping
@@ -92,7 +93,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.8")
+st.title("Crypto Scalping Lab v1.9")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -1581,6 +1582,141 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("Frozen Historical Holdout · v1.9")
+st.caption(
+    "We freeze the pattern observed in v1.8 and test it on an older, non-overlapping window. "
+    "No thresholds or horizons are optimized inside this block. Fixed rules: LONG when a coin breaks up "
+    "against an alt-BEAR basket and exit after 30m; SHORT when a coin breaks down against an alt-BULL basket "
+    "and exit after 15m."
+)
+
+ho1, ho2, ho3 = st.columns(3)
+with ho1:
+    holdout_horizon = st.select_slider(
+        "Older holdout length",
+        options=[120, 180],
+        value=180,
+        format_func=lambda x: f"{x} days",
+        key="holdout_horizon",
+    )
+with ho2:
+    st.metric("Gap from development window", "90 days")
+with ho3:
+    st.metric("Rules", "Frozen")
+
+holdout_signature = (
+    int(holdout_horizon),
+    int(rolling_lookback),
+    int(rolling_forward),
+    int(rolling_pool),
+    int(rolling_top_n),
+    float(rolling_min_turnover_m),
+    float(scalp_fee_bps),
+    float(scalp_slippage_bps),
+)
+
+run_holdout = st.button(
+    "Run frozen historical holdout",
+    use_container_width=True,
+    key="run_counter_regime_holdout",
+)
+
+if run_holdout:
+    with st.spinner(
+        "Rebuilding the older historical universe and testing the frozen counter-regime rules..."
+    ):
+        try:
+            holdout_summary, holdout_events, holdout_periods, holdout_universe_summary = run_counter_regime_holdout(
+                horizon_days=int(holdout_horizon),
+                end_offset_days=90,
+                lookback_days=int(rolling_lookback),
+                forward_days=int(rolling_forward),
+                pool_size=int(rolling_pool),
+                select_top_n=int(rolling_top_n),
+                min_daily_turnover_usd=float(rolling_min_turnover_m) * 1_000_000.0,
+                fee_bps=float(scalp_fee_bps),
+                slippage_bps=float(scalp_slippage_bps),
+            )
+            st.session_state["holdout_summary"] = holdout_summary
+            st.session_state["holdout_events"] = holdout_events
+            st.session_state["holdout_periods"] = holdout_periods
+            st.session_state["holdout_universe_summary"] = holdout_universe_summary
+            st.session_state["holdout_signature"] = holdout_signature
+        except Exception as exc:
+            st.error(f"Frozen historical holdout failed: {exc}")
+
+holdout_summary = st.session_state.get("holdout_summary")
+holdout_events = st.session_state.get("holdout_events")
+holdout_periods = st.session_state.get("holdout_periods")
+holdout_universe_summary = st.session_state.get("holdout_universe_summary")
+saved_holdout_signature = st.session_state.get("holdout_signature")
+
+if holdout_summary is not None:
+    if saved_holdout_signature != holdout_signature:
+        st.info("Holdout settings changed. Run the frozen holdout again.")
+    else:
+        if holdout_universe_summary is not None:
+            h1, h2, h3 = st.columns(3)
+            holdout_period_count = int(holdout_universe_summary.get("periods", 0))
+            holdout_positive = int(
+                holdout_universe_summary.get("positive_vol_uplift_periods", 0)
+            )
+            h1.metric("Holdout universe periods", holdout_period_count)
+            h2.metric(
+                "Positive universe vol uplift",
+                f"{holdout_positive}/{holdout_period_count}" if holdout_period_count else "0/0",
+            )
+            h3.metric(
+                "Universe avg vol uplift",
+                f"{holdout_universe_summary.get('avg_vol_uplift_pct', 0.0):.1f}%",
+            )
+
+        shown_holdout = holdout_summary.copy()
+        for col in [
+            "Gross avg bps",
+            "Gross median bps",
+            "Trimmed gross avg bps",
+            "Net avg bps",
+            "Net median bps",
+            "Net positive events %",
+            "Worst period avg bps",
+            "Best period avg bps",
+            "Round-trip cost bps",
+            "Gross edge / cost",
+        ]:
+            if col in shown_holdout:
+                shown_holdout[col] = shown_holdout[col].round(2)
+
+        st.dataframe(
+            shown_holdout,
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "This is the important robustness check. Because the rules were fixed before this older window was "
+            "examined, these results are much more informative than another optimization on the recent 12 weeks. "
+            "Trimmed gross average removes the most extreme 10% tails on each side."
+        )
+
+        if holdout_events is not None and not holdout_events.empty:
+            with st.expander("Historical holdout event details"):
+                shown_holdout_events = holdout_events.copy()
+                for col in [
+                    "Gross bps",
+                    "Net bps",
+                    "Breadth",
+                    "Coin volume ratio",
+                    "Range / ATR",
+                    "Relative move / ATR",
+                ]:
+                    if col in shown_holdout_events:
+                        shown_holdout_events[col] = shown_holdout_events[col].round(2)
+                st.dataframe(
+                    shown_holdout_events,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -2171,7 +2307,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.8 logic and backtest assumptions"):
+with st.expander("v1.9 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
