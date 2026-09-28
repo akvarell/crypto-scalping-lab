@@ -13,6 +13,7 @@ from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
 from src.event_edge_study import run_event_edge_study
 from src.execution_reality import run_execution_reality_check
+from src.exit_surface import run_exit_surface
 from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
@@ -94,7 +95,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.0")
+st.title("Crypto Scalping Lab v2.1")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -1882,6 +1883,134 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("1m Exit Surface · v2.1")
+st.caption(
+    "The v2.0 12-period result kept some LONG/BULL edge, but fixed 10-minute exits were unstable. "
+    "This development study freezes the signal itself and varies only a coarse 1m stop/take grid. "
+    "Candidate signal: LONG + alt-BULL + 1m volume confirmation. Maximum holding time stays fixed at 10 minutes."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The exit study uses the same historical selections.")
+else:
+    xs1, xs2, xs3 = st.columns(3)
+    with xs1:
+        exit_surface_periods = st.select_slider(
+            "Periods to study",
+            options=[4, 8, 12],
+            value=12,
+            key="exit_surface_periods",
+        )
+    with xs2:
+        exit_surface_fee = st.number_input(
+            "Exit-study fee per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=4.0,
+            step=0.5,
+            key="exit_surface_fee",
+        )
+    with xs3:
+        exit_surface_slippage = st.number_input(
+            "Exit-study slippage per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=2.0,
+            step=0.5,
+            key="exit_surface_slippage",
+        )
+
+    exit_surface_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(exit_surface_periods),
+        float(exit_surface_fee),
+        float(exit_surface_slippage),
+    )
+
+    run_exit_surface_button = st.button(
+        "Run 1m exit surface",
+        use_container_width=True,
+        key="run_exit_surface",
+    )
+
+    if run_exit_surface_button:
+        with st.spinner(
+            "Reusing the fixed LONG/BULL 1m-confirm entries and testing a coarse stop/take grid..."
+        ):
+            try:
+                exit_surface_summary, exit_surface_details = run_exit_surface(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(exit_surface_fee),
+                    slippage_bps=float(exit_surface_slippage),
+                    max_periods=int(exit_surface_periods),
+                )
+                st.session_state["exit_surface_summary"] = exit_surface_summary
+                st.session_state["exit_surface_details"] = exit_surface_details
+                st.session_state["exit_surface_signature"] = exit_surface_signature
+            except Exception as exc:
+                st.error(f"1m Exit Surface failed: {exc}")
+
+    exit_surface_summary = st.session_state.get("exit_surface_summary")
+    exit_surface_details = st.session_state.get("exit_surface_details")
+    saved_exit_surface_signature = st.session_state.get("exit_surface_signature")
+
+    if exit_surface_summary is not None:
+        if saved_exit_surface_signature != exit_surface_signature:
+            st.info("Exit-study settings changed. Run it again to refresh the results.")
+        else:
+            shown_exit_surface = exit_surface_summary.copy()
+
+            for col in [
+                "Gross avg bps",
+                "Gross median bps",
+                "Trimmed gross avg bps",
+                "Net avg bps",
+                "Net median bps",
+                "Net positive events %",
+                "Worst period avg bps",
+                "Best period avg bps",
+                "Take exits %",
+                "Stop exits %",
+                "Time exits %",
+                "Avg hold min",
+                "Round-trip cost bps",
+            ]:
+                if col in shown_exit_surface:
+                    shown_exit_surface[col] = shown_exit_surface[col].round(2)
+
+            baseline = shown_exit_surface[shown_exit_surface["Config"] == "Fixed 10m"]
+            grid = shown_exit_surface[shown_exit_surface["Config"] != "Fixed 10m"].sort_values(
+                ["Net avg bps", "Trimmed gross avg bps"],
+                ascending=[False, False],
+            )
+            shown_exit_surface = pd.concat([baseline, grid], ignore_index=True)
+
+            st.dataframe(
+                shown_exit_surface,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "This is still development data, so the top row in the stop/take grid is not a validated strategy. "
+                "We are looking for a broad, stable region: positive net expectancy, positive trimmed gross, "
+                "reasonable period consistency, and neighboring stop/take settings with similar behavior. "
+                "If one isolated parameter pair looks exceptional, treat it as likely overfit."
+            )
+
+            if exit_surface_details is not None and not exit_surface_details.empty:
+                with st.expander("Exit-surface event details"):
+                    shown_exit_details = exit_surface_details.copy()
+                    for col in ["Gross bps", "Net bps"]:
+                        if col in shown_exit_details:
+                            shown_exit_details[col] = shown_exit_details[col].round(2)
+                    st.dataframe(
+                        shown_exit_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -2472,7 +2601,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v2.0 logic and backtest assumptions"):
+with st.expander("v2.1 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
