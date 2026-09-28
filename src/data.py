@@ -1,58 +1,105 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
+
 import pandas as pd
 import requests
 
-PAIR_MAP = {
-    "BTC/USDT": "XBTUSDT",
-    "ETH/USDT": "ETHUSDT",
-    "SOL/USDT": "SOLUSDT",
-    "XRP/USDT": "XRPUSDT",
+PRODUCT_MAP = {
+    "BTC/USD": "BTC-USD",
+    "ETH/USD": "ETH-USD",
+    "SOL/USD": "SOL-USD",
+    "XRP/USD": "XRP-USD",
 }
 
-INTERVAL_MAP = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
+GRANULARITY = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
 }
 
 
-def fetch_ohlcv(symbol: str, timeframe: str = "5m", limit: int = 500) -> pd.DataFrame:
-    """Fetch public OHLCV candles from Kraken; no API key required."""
-    pair = PAIR_MAP.get(symbol)
-    interval = INTERVAL_MAP.get(timeframe)
-    if pair is None:
+def fetch_ohlcv(symbol: str, timeframe: str = "5m", limit: int = 3000) -> pd.DataFrame:
+    """Fetch historical public OHLCV candles from Coinbase Exchange.
+
+    Coinbase returns at most about 300 candles per request, so the function
+    walks backwards in time and joins multiple public requests. No API key is used.
+    """
+    product = PRODUCT_MAP.get(symbol)
+    granularity = GRANULARITY.get(timeframe)
+
+    if product is None:
         raise ValueError(f"Unsupported symbol: {symbol}")
-    if interval is None:
+    if granularity is None:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
 
-    response = requests.get(
-        "https://api.kraken.com/0/public/OHLC",
-        params={"pair": pair, "interval": interval},
-        timeout=20,
-        headers={"User-Agent": "crypto-scalping-lab/0.1"},
-    )
-    response.raise_for_status()
-    payload = response.json()
+    limit = max(300, min(int(limit), 5000))
+    session = requests.Session()
+    session.headers.update({"User-Agent": "crypto-scalping-lab/0.4"})
 
-    errors = payload.get("error") or []
-    if errors:
-        raise RuntimeError("; ".join(errors))
+    end_ts = int(datetime.now(timezone.utc).timestamp())
+    end_ts -= end_ts % granularity
 
-    result = payload.get("result") or {}
-    keys = [key for key in result.keys() if key != "last"]
-    if not keys:
+    rows: list[list[float]] = []
+    seen: set[int] = set()
+    max_batches = (limit + 299) // 300 + 2
+
+    for _ in range(max_batches):
+        if len(seen) >= limit:
+            break
+
+        batch_size = min(300, limit - len(seen))
+        start_ts = end_ts - granularity * batch_size
+
+        response = session.get(
+            f"https://api.exchange.coinbase.com/products/{product}/candles",
+            params={
+                "granularity": granularity,
+                "start": datetime.fromtimestamp(start_ts, tz=timezone.utc).isoformat(),
+                "end": datetime.fromtimestamp(end_ts, tz=timezone.utc).isoformat(),
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        batch = response.json()
+
+        if not isinstance(batch, list):
+            raise RuntimeError(f"Unexpected market-data response: {batch}")
+        if not batch:
+            break
+
+        oldest = None
+        for item in batch:
+            if not isinstance(item, list) or len(item) < 6:
+                continue
+            ts = int(item[0])
+            oldest = ts if oldest is None else min(oldest, ts)
+            if ts not in seen:
+                seen.add(ts)
+                rows.append(item[:6])
+
+        if oldest is None:
+            break
+
+        end_ts = oldest - granularity
+        time.sleep(0.08)
+
+    if not rows:
         raise RuntimeError("Market data provider returned no candles.")
 
-    rows = result[keys[0]]
+    # Coinbase candle order: time, low, high, open, close, volume.
     df = pd.DataFrame(
         rows,
-        columns=["timestamp", "open", "high", "low", "close", "vwap", "volume", "count"],
+        columns=["timestamp", "low", "high", "open", "close", "volume"],
     )
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
-    numeric = ["open", "high", "low", "close", "vwap", "volume"]
+    numeric = ["open", "high", "low", "close", "volume"]
     df[numeric] = df[numeric].astype(float)
-    df = df.set_index("timestamp")
-    return df[["open", "high", "low", "close", "volume"]].tail(int(limit))
+    df = (
+        df.drop_duplicates(subset=["timestamp"])
+        .sort_values("timestamp")
+        .set_index("timestamp")
+    )
+    return df[["open", "high", "low", "close", "volume"]].tail(limit)
