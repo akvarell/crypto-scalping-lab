@@ -8,6 +8,7 @@ from src.backtest import run_backtest
 from src.data import fetch_ohlcv
 from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
+from src.execution_reality import run_execution_reality_check
 from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
@@ -86,7 +87,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.2")
+st.title("Crypto Scalping Lab v1.3")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -858,6 +859,145 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("Execution Reality Check · v1.3")
+st.caption(
+    "Signals are now acted on only at the NEXT 5-minute bar open. "
+    "This removes the optimistic same-bar-close execution used in earlier research. "
+    "The table also separates LONG/SHORT and tests simple cooldowns to reduce turnover."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. This check uses the same historical selections.")
+else:
+    er1, er2, er3 = st.columns(3)
+    with er1:
+        reality_strategy = st.selectbox(
+            "Strategy to audit",
+            ["Mean Reversion", "Momentum Pullback", "Vol+Volume Breakout"],
+            index=0,
+            key="reality_strategy",
+        )
+    with er2:
+        reality_periods = st.select_slider(
+            "Periods to audit",
+            options=[4, 8, 12],
+            value=12,
+            key="reality_periods",
+        )
+    with er3:
+        st.metric(
+            "Round-trip cost assumption",
+            f"{2 * (float(scalp_fee_bps) + float(scalp_slippage_bps)):.1f} bps",
+        )
+
+    reality_signature = (
+        saved_rolling_signature,
+        reality_strategy,
+        int(rolling_forward),
+        int(reality_periods),
+        float(scalp_fee_bps),
+        float(scalp_slippage_bps),
+    )
+
+    run_reality = st.button(
+        "Run execution reality check",
+        use_container_width=True,
+        key="run_execution_reality",
+    )
+
+    if run_reality:
+        with st.spinner(
+            "Re-running the selected strategy with next-bar execution, side splits and cooldowns..."
+        ):
+            try:
+                reality_summary, reality_period_table, reality_details = run_execution_reality_check(
+                    rolling_details,
+                    strategy_name=reality_strategy,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(scalp_fee_bps),
+                    slippage_bps=float(scalp_slippage_bps),
+                    max_periods=int(reality_periods),
+                )
+                st.session_state["reality_summary"] = reality_summary
+                st.session_state["reality_period_table"] = reality_period_table
+                st.session_state["reality_details"] = reality_details
+                st.session_state["reality_signature"] = reality_signature
+            except Exception as exc:
+                st.error(f"Execution reality check failed: {exc}")
+
+    reality_summary = st.session_state.get("reality_summary")
+    reality_period_table = st.session_state.get("reality_period_table")
+    reality_details = st.session_state.get("reality_details")
+    saved_reality_signature = st.session_state.get("reality_signature")
+
+    if reality_summary is not None:
+        if saved_reality_signature != reality_signature:
+            st.info("Reality-check settings changed. Run it again to refresh the results.")
+        else:
+            shown_reality = reality_summary.copy()
+            for col in [
+                "Avg gross return %",
+                "Avg net return %",
+                "Median net return %",
+                "Compounded net %",
+                "Avg cost drag pp",
+                "Worst period %",
+                "Best period %",
+                "Avg trade %",
+                "Avg net PF",
+            ]:
+                if col in shown_reality:
+                    shown_reality[col] = shown_reality[col].round(3)
+
+            st.dataframe(
+                shown_reality,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Interpretation: LONG/SHORT rows diagnose directional asymmetry. "
+                "Cooldown rows show whether fewer, more selective trades improve net results. "
+                "Gross vs net still separates signal edge from execution costs."
+            )
+
+            if reality_period_table is not None and not reality_period_table.empty:
+                with st.expander("Reality-check weekly portfolio results"):
+                    shown_reality_periods = reality_period_table.copy()
+                    for col in [
+                        "Gross portfolio return %",
+                        "Net portfolio return %",
+                        "Cost drag pp",
+                        "Avg trade %",
+                    ]:
+                        if col in shown_reality_periods:
+                            shown_reality_periods[col] = shown_reality_periods[col].round(3)
+                    st.dataframe(
+                        shown_reality_periods,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            if reality_details is not None and not reality_details.empty:
+                with st.expander("Reality-check per-coin results"):
+                    shown_reality_details = reality_details.copy()
+                    for col in [
+                        "Gross return %",
+                        "Net return %",
+                        "Cost drag pp",
+                        "Gross PF",
+                        "Net PF",
+                        "Win rate %",
+                        "Max DD %",
+                        "Avg trade %",
+                    ]:
+                        if col in shown_reality_details:
+                            shown_reality_details[col] = shown_reality_details[col].round(3)
+                    st.dataframe(
+                        shown_reality_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -1448,7 +1588,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.2 logic and backtest assumptions"):
+with st.expander("v1.3 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
