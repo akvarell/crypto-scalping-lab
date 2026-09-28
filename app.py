@@ -20,6 +20,7 @@ from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
 from src.rolling_universe import run_rolling_universe_validation
+from src.scalping_edge_map import run_scalping_edge_map
 from src.strategy import generate_signals
 from src.universe import build_universe_screener
 from src.walkforward import evaluate_walk_forward
@@ -93,7 +94,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.9")
+st.title("Crypto Scalping Lab v2.0")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -1717,6 +1718,170 @@ if holdout_summary is not None:
                     hide_index=True,
                 )
 
+st.subheader("Scalping Edge Map · v2.0")
+st.caption(
+    "Multi-timeframe research: the Rolling Universe chooses active alts, 5m builds the alt-basket context, "
+    "and 1m is used for execution and forward-move measurement. A 5m event is only tradable after that "
+    "5m candle closes; entry is therefore at a later 1m open, not inside the signal candle."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The 1m edge map uses those historical selections.")
+else:
+    em1, em2, em3 = st.columns(3)
+    with em1:
+        edge_map_periods = st.select_slider(
+            "Periods to map",
+            options=[2, 4, 8, 12],
+            value=4,
+            key="edge_map_periods",
+        )
+    with em2:
+        edge_map_fee_bps = st.number_input(
+            "1m fee per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=4.0,
+            step=0.5,
+            key="edge_map_fee_bps",
+        )
+    with em3:
+        edge_map_slippage_bps = st.number_input(
+            "1m slippage per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=2.0,
+            step=0.5,
+            key="edge_map_slippage_bps",
+        )
+
+    st.caption(
+        "Start with 4 periods: 1m history is much heavier than 5m. After the first result, "
+        "increase to 8 or 12 periods for a longer-distance check. Raw 1m downloads are cached in-process."
+    )
+
+    edge_map_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(edge_map_periods),
+        float(edge_map_fee_bps),
+        float(edge_map_slippage_bps),
+    )
+
+    run_edge_map = st.button(
+        "Run 1m Scalping Edge Map",
+        use_container_width=True,
+        key="run_scalping_edge_map",
+    )
+
+    if run_edge_map:
+        with st.spinner(
+            "Downloading 1m candles, rebuilding 5m alt context and measuring 1/3/5/10/15/30m forward edge..."
+        ):
+            try:
+                edge_map_summary, edge_map_details = run_scalping_edge_map(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(edge_map_fee_bps),
+                    slippage_bps=float(edge_map_slippage_bps),
+                    max_periods=int(edge_map_periods),
+                )
+                st.session_state["edge_map_summary"] = edge_map_summary
+                st.session_state["edge_map_details"] = edge_map_details
+                st.session_state["edge_map_signature"] = edge_map_signature
+            except Exception as exc:
+                st.error(f"1m Scalping Edge Map failed: {exc}")
+
+    edge_map_summary = st.session_state.get("edge_map_summary")
+    edge_map_details = st.session_state.get("edge_map_details")
+    saved_edge_map_signature = st.session_state.get("edge_map_signature")
+
+    if edge_map_summary is not None:
+        if saved_edge_map_signature != edge_map_signature:
+            st.info("1m Edge Map settings changed. Run it again to refresh the results.")
+        else:
+            ef1, ef2, ef3 = st.columns(3)
+            with ef1:
+                entry_mode_filter = st.multiselect(
+                    "Entry mode",
+                    options=edge_map_summary["Entry mode"].dropna().unique().tolist(),
+                    default=edge_map_summary["Entry mode"].dropna().unique().tolist(),
+                    key="edge_map_entry_filter",
+                )
+            with ef2:
+                side_filter = st.multiselect(
+                    "Side",
+                    options=edge_map_summary["Side"].dropna().unique().tolist(),
+                    default=edge_map_summary["Side"].dropna().unique().tolist(),
+                    key="edge_map_side_filter",
+                )
+            with ef3:
+                regime_filter = st.multiselect(
+                    "Alt regime",
+                    options=edge_map_summary["Alt regime"].dropna().unique().tolist(),
+                    default=edge_map_summary["Alt regime"].dropna().unique().tolist(),
+                    key="edge_map_regime_filter",
+                )
+
+            shown_edge_map = edge_map_summary[
+                edge_map_summary["Entry mode"].isin(entry_mode_filter)
+                & edge_map_summary["Side"].isin(side_filter)
+                & edge_map_summary["Alt regime"].isin(regime_filter)
+            ].copy()
+
+            horizon_order = {"1m": 1, "3m": 3, "5m": 5, "10m": 10, "15m": 15, "30m": 30}
+            shown_edge_map["_h"] = shown_edge_map["Horizon"].map(horizon_order)
+            shown_edge_map = shown_edge_map.sort_values(
+                ["Entry mode", "Side", "Alt regime", "_h"]
+            ).drop(columns=["_h"])
+
+            for col in [
+                "Gross avg bps",
+                "Gross median bps",
+                "Trimmed gross avg bps",
+                "Net avg bps",
+                "Net positive events %",
+                "Avg MFE bps",
+                "Avg MAE bps",
+                "Round-trip cost bps",
+                "Gross edge / cost",
+            ]:
+                if col in shown_edge_map:
+                    shown_edge_map[col] = shown_edge_map[col].round(2)
+
+            st.dataframe(
+                shown_edge_map,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Immediate next 1m enters at the first 1m open after the 5m context candle has closed. "
+                "1m volume confirm waits up to 3 completed 1m candles for same-direction movement with "
+                "volume >= 1.5× its 20-minute average, then enters at the following 1m open. "
+                "MFE/MAE show favorable/adverse excursion after entry."
+            )
+
+            if edge_map_details is not None and not edge_map_details.empty:
+                with st.expander("1m event-level details"):
+                    shown_edge_details = edge_map_details.copy()
+                    for col in [
+                        "Gross bps",
+                        "Net bps",
+                        "MFE bps",
+                        "MAE bps",
+                        "Breadth",
+                        "Coin volume ratio 5m",
+                        "Range / ATR 5m",
+                        "Relative move / ATR 5m",
+                    ]:
+                        if col in shown_edge_details:
+                            shown_edge_details[col] = shown_edge_details[col].round(2)
+                    st.dataframe(
+                        shown_edge_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -2307,7 +2472,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.9 logic and backtest assumptions"):
+with st.expander("v2.0 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
