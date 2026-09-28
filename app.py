@@ -11,6 +11,7 @@ from src.data import fetch_ohlcv
 from src.direction_regime_study import run_direction_regime_study
 from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
+from src.entry_quality_holdout import run_frozen_1m_entry_holdout
 from src.entry_quality_lab import run_entry_quality_lab
 from src.event_edge_study import run_event_edge_study
 from src.execution_reality import run_execution_reality_check
@@ -96,7 +97,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.2")
+st.title("Crypto Scalping Lab v2.3")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -2160,6 +2161,163 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("Frozen 1m Entry Holdout · v2.3")
+st.caption(
+    "The v2.2 development sample produced two stronger entry-quality subsets. "
+    "This block freezes those rules and tests them on an older window that ends 270 days before today, "
+    "separate from both the recent 90-day development sample and the older v1.9 window. "
+    "Signal, thresholds and 10-minute exit are not retuned inside this holdout."
+)
+
+fh1, fh2, fh3 = st.columns(3)
+with fh1:
+    frozen_holdout_days = st.select_slider(
+        "Frozen holdout length",
+        options=[90, 120, 180],
+        value=120,
+        format_func=lambda x: f"{x} days",
+        key="frozen_1m_holdout_days",
+    )
+with fh2:
+    st.metric("Window ends", "270 days ago")
+with fh3:
+    st.metric("Exit", "Fixed 10m")
+
+fc1, fc2 = st.columns(2)
+with fc1:
+    frozen_fee = st.number_input(
+        "Frozen holdout fee per side, bps",
+        min_value=0.0,
+        max_value=20.0,
+        value=4.0,
+        step=0.5,
+        key="frozen_1m_fee",
+    )
+with fc2:
+    frozen_slippage = st.number_input(
+        "Frozen holdout slippage per side, bps",
+        min_value=0.0,
+        max_value=20.0,
+        value=2.0,
+        step=0.5,
+        key="frozen_1m_slippage",
+    )
+
+frozen_1m_signature = (
+    int(frozen_holdout_days),
+    int(rolling_lookback),
+    int(rolling_forward),
+    int(rolling_pool),
+    int(rolling_top_n),
+    float(rolling_min_turnover_m),
+    float(frozen_fee),
+    float(frozen_slippage),
+)
+
+run_frozen_1m = st.button(
+    "Run frozen 1m entry holdout",
+    use_container_width=True,
+    key="run_frozen_1m_entry_holdout",
+)
+
+if run_frozen_1m:
+    with st.spinner(
+        "Rebuilding an older rolling universe and downloading its 1m data. This is the heaviest validation run so far..."
+    ):
+        try:
+            frozen_1m_summary, frozen_1m_details, frozen_1m_periods, frozen_1m_universe_summary = run_frozen_1m_entry_holdout(
+                horizon_days=int(frozen_holdout_days),
+                end_offset_days=270,
+                lookback_days=int(rolling_lookback),
+                forward_days=int(rolling_forward),
+                pool_size=int(rolling_pool),
+                select_top_n=int(rolling_top_n),
+                min_daily_turnover_usd=float(rolling_min_turnover_m) * 1_000_000.0,
+                fee_bps=float(frozen_fee),
+                slippage_bps=float(frozen_slippage),
+            )
+            st.session_state["frozen_1m_summary"] = frozen_1m_summary
+            st.session_state["frozen_1m_details"] = frozen_1m_details
+            st.session_state["frozen_1m_periods"] = frozen_1m_periods
+            st.session_state["frozen_1m_universe_summary"] = frozen_1m_universe_summary
+            st.session_state["frozen_1m_signature"] = frozen_1m_signature
+        except Exception as exc:
+            st.error(f"Frozen 1m holdout failed: {exc}")
+
+frozen_1m_summary = st.session_state.get("frozen_1m_summary")
+frozen_1m_details = st.session_state.get("frozen_1m_details")
+frozen_1m_universe_summary = st.session_state.get("frozen_1m_universe_summary")
+saved_frozen_1m_signature = st.session_state.get("frozen_1m_signature")
+
+if frozen_1m_summary is not None:
+    if saved_frozen_1m_signature != frozen_1m_signature:
+        st.info("Frozen 1m holdout settings changed. Run it again.")
+    else:
+        if frozen_1m_universe_summary is not None:
+            fu1, fu2, fu3 = st.columns(3)
+            fp = int(frozen_1m_universe_summary.get("periods", 0))
+            fpos = int(frozen_1m_universe_summary.get("positive_vol_uplift_periods", 0))
+            fu1.metric("Holdout universe periods", fp)
+            fu2.metric(
+                "Positive universe vol uplift",
+                f"{fpos}/{fp}" if fp else "0/0",
+            )
+            fu3.metric(
+                "Universe avg vol uplift",
+                f"{frozen_1m_universe_summary.get('avg_vol_uplift_pct', 0.0):.1f}%",
+            )
+
+        shown_frozen_1m = frozen_1m_summary.copy()
+        for col in [
+            "Gross avg bps",
+            "Gross median bps",
+            "Trimmed gross avg bps",
+            "Net avg bps",
+            "Net median bps",
+            "Net positive events %",
+            "Worst period avg bps",
+            "Best period avg bps",
+            "Avg 1m confirm vol",
+            "Avg 1m body bps",
+            "Avg 5m event vol",
+            "Avg 5m relative / ATR",
+            "Round-trip cost bps",
+        ]:
+            if col in shown_frozen_1m:
+                shown_frozen_1m[col] = shown_frozen_1m[col].round(2)
+
+        st.dataframe(
+            shown_frozen_1m,
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "The Baseline row is a control. Strong 1m confirm and Dual strong are the frozen v2.2 hypotheses. "
+            "Do not tune thresholds from this table; if a frozen subset remains positive here, the next step is "
+            "an execution/risk model built around that fixed signal rather than another search on this window."
+        )
+
+        if frozen_1m_details is not None and not frozen_1m_details.empty:
+            with st.expander("Frozen 1m holdout event details"):
+                shown_frozen_details = frozen_1m_details.copy()
+                for col in [
+                    "Gross bps",
+                    "Net bps",
+                    "1m confirm volume ratio",
+                    "1m confirm body bps",
+                    "5m volume ratio",
+                    "5m range / ATR",
+                    "5m relative move / ATR",
+                    "Breadth",
+                ]:
+                    if col in shown_frozen_details:
+                        shown_frozen_details[col] = shown_frozen_details[col].round(2)
+                st.dataframe(
+                    shown_frozen_details,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -2750,7 +2908,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v2.2 logic and backtest assumptions"):
+with st.expander("v2.3 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
