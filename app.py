@@ -11,6 +11,7 @@ from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.optimizer import optimize_quick
+from src.rolling_universe import run_rolling_universe_validation
 from src.strategy import generate_signals
 from src.universe import build_universe_screener
 from src.walkforward import evaluate_walk_forward
@@ -84,7 +85,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v0.9")
+st.title("Crypto Scalping Lab v1.0")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -528,6 +529,186 @@ if universe_df is not None:
             "Research score = 30% liquidity + 35% realized volatility + 25% ATR rank + 10% activity. "
             "BTC correlation is intentionally separate. For a historical strategy test, the universe "
             "must be re-selected at each past date using only information available before that date."
+        )
+
+st.subheader("Rolling Universe Validation · v1.0")
+st.caption(
+    "Long-distance validation of the screener itself. At each historical rebalance date, "
+    "symbols are ranked only with the preceding lookback window; the selected set is then "
+    "measured on the following period. This tests whether the screener finds future opportunity "
+    "before we attach a trading strategy."
+)
+
+ru1, ru2, ru3 = st.columns(3)
+with ru1:
+    rolling_horizon = st.select_slider(
+        "Validation horizon",
+        options=[60, 90, 180],
+        value=90,
+        format_func=lambda x: f"{x} days",
+        key="rolling_horizon",
+    )
+with ru2:
+    rolling_lookback = st.select_slider(
+        "Selection lookback",
+        options=[7, 14, 30],
+        value=14,
+        format_func=lambda x: f"{x} days",
+        key="rolling_lookback",
+    )
+with ru3:
+    rolling_forward = st.select_slider(
+        "Forward evaluation window",
+        options=[3, 7],
+        value=7,
+        format_func=lambda x: f"{x} days",
+        key="rolling_forward",
+    )
+
+ru4, ru5, ru6 = st.columns(3)
+with ru4:
+    rolling_pool = st.slider(
+        "Candidate pool size",
+        min_value=10,
+        max_value=40,
+        value=20,
+        step=5,
+        key="rolling_pool",
+    )
+with ru5:
+    rolling_top_n = st.slider(
+        "Select top N each period",
+        min_value=2,
+        max_value=8,
+        value=5,
+        step=1,
+        key="rolling_top_n",
+    )
+with ru6:
+    rolling_min_turnover_m = st.number_input(
+        "Historical min daily turnover, $M",
+        min_value=1.0,
+        max_value=200.0,
+        value=5.0,
+        step=5.0,
+        key="rolling_min_turnover_m",
+    )
+
+rolling_signature = (
+    int(rolling_horizon),
+    int(rolling_lookback),
+    int(rolling_forward),
+    int(rolling_pool),
+    int(rolling_top_n),
+    float(rolling_min_turnover_m),
+)
+
+run_rolling = st.button(
+    "Run rolling universe validation",
+    use_container_width=True,
+    key="run_rolling_universe",
+)
+
+if run_rolling:
+    with st.spinner(
+        "Downloading historical hourly data and rebuilding the universe at each past date..."
+    ):
+        try:
+            rolling_periods, rolling_details, rolling_summary = run_rolling_universe_validation(
+                horizon_days=int(rolling_horizon),
+                lookback_days=int(rolling_lookback),
+                forward_days=int(rolling_forward),
+                pool_size=int(rolling_pool),
+                select_top_n=int(rolling_top_n),
+                min_daily_turnover_usd=float(rolling_min_turnover_m) * 1_000_000.0,
+            )
+            st.session_state["rolling_periods"] = rolling_periods
+            st.session_state["rolling_details"] = rolling_details
+            st.session_state["rolling_summary"] = rolling_summary
+            st.session_state["rolling_signature"] = rolling_signature
+        except Exception as exc:
+            st.error(f"Rolling validation failed: {exc}")
+
+rolling_periods = st.session_state.get("rolling_periods")
+rolling_details = st.session_state.get("rolling_details")
+rolling_summary = st.session_state.get("rolling_summary")
+saved_rolling_signature = st.session_state.get("rolling_signature")
+
+if rolling_summary is not None:
+    if saved_rolling_signature != rolling_signature:
+        st.info("Rolling validation settings changed. Run it again to refresh the results.")
+    else:
+        periods_count = int(rolling_summary.get("periods", 0))
+        positive_count = int(rolling_summary.get("positive_vol_uplift_periods", 0))
+
+        rs1, rs2, rs3, rs4, rs5 = st.columns(5)
+        rs1.metric("Periods", periods_count)
+        rs2.metric(
+            "Positive vol uplift",
+            f"{positive_count}/{periods_count}" if periods_count else "0/0",
+        )
+        rs3.metric(
+            "Avg vol uplift",
+            f"{rolling_summary.get('avg_vol_uplift_pct', 0.0):.1f}%",
+        )
+        rs4.metric(
+            "Median vol uplift",
+            f"{rolling_summary.get('median_vol_uplift_pct', 0.0):.1f}%",
+        )
+        rs5.metric(
+            "Avg move uplift",
+            f"{rolling_summary.get('avg_move_uplift_pct', 0.0):.1f}%",
+        )
+
+        st.caption(
+            "Positive uplift means the coins selected using only past data were, on average, "
+            "more volatile/move-rich in the following window than the eligible comparison universe. "
+            "This validates opportunity selection, not profitability."
+        )
+
+        if rolling_periods is not None and not rolling_periods.empty:
+            shown_periods = rolling_periods.copy()
+            for col in [
+                "Selected forward vol %",
+                "Universe forward vol %",
+                "Vol uplift %",
+                "Selected abs 1h move %",
+                "Universe abs 1h move %",
+                "Move uplift %",
+                "Turnover uplift %",
+            ]:
+                if col in shown_periods:
+                    shown_periods[col] = shown_periods[col].round(2)
+
+            st.dataframe(
+                shown_periods,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        if rolling_details is not None and not rolling_details.empty:
+            with st.expander("Selected-symbol details by period"):
+                shown_details = rolling_details.copy()
+                for col in [
+                    "Selection score",
+                    "Lookback vol %",
+                    "Lookback ATR %",
+                    "Forward vol %",
+                    "Forward ATR %",
+                    "Forward abs 1h move %",
+                ]:
+                    if col in shown_details:
+                        shown_details[col] = shown_details[col].round(2)
+                st.dataframe(
+                    shown_details,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        st.warning(
+            "Research-stage caveat: this historical test uses a pool of symbols that are trading today, "
+            "so survivorship bias is not fully removed yet. A later production-grade version should "
+            "reconstruct historical listings/delistings as well."
         )
 
 st.subheader("Strategy family benchmark · v0.6")
@@ -1120,7 +1301,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v0.9 logic and backtest assumptions"):
+with st.expander("v1.0 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
