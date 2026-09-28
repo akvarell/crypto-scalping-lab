@@ -112,3 +112,67 @@ def generate_family_signals(
         return out
 
     raise ValueError(f"Unknown strategy family: {family}")
+
+
+
+def generate_mean_reversion_variant(
+    df: pd.DataFrame,
+    variant: str,
+    *,
+    mean_window: int = 20,
+    z_entry: float = 2.0,
+    slope_bars: int = 12,
+) -> pd.DataFrame:
+    """Fixed mean-reversion research variants for regime diagnostics."""
+    out = df.copy()
+    out["signal"] = 0
+
+    mean = out["close"].rolling(int(mean_window), min_periods=int(mean_window)).mean()
+    std = out["close"].rolling(int(mean_window), min_periods=int(mean_window)).std()
+    z = (out["close"] - mean) / std.replace(0.0, float("nan"))
+
+    extreme_long = (z <= -float(z_entry)) & (out["rsi"] <= 30)
+    extreme_short = (z >= float(z_entry)) & (out["rsi"] >= 70)
+
+    if variant == "Extreme entry":
+        out.loc[extreme_long, "signal"] = 1
+        out.loc[extreme_short, "signal"] = -1
+        return out
+
+    reclaim_long = (
+        (z.shift(1) <= -float(z_entry))
+        & (z > -float(z_entry))
+        & (out["rsi"] > out["rsi"].shift(1))
+        & (out["rsi"] <= 45)
+    )
+    reclaim_short = (
+        (z.shift(1) >= float(z_entry))
+        & (z < float(z_entry))
+        & (out["rsi"] < out["rsi"].shift(1))
+        & (out["rsi"] >= 55)
+    )
+
+    if variant == "Reclaim entry":
+        out.loc[reclaim_long, "signal"] = 1
+        out.loc[reclaim_short, "signal"] = -1
+        return out
+
+    trend_move = (out["trend_ema"] - out["trend_ema"].shift(int(slope_bars))).abs()
+    flat_regime = trend_move <= (out["atr"] * 1.25)
+
+    if variant == "Reclaim + flat regime":
+        out.loc[reclaim_long & flat_regime, "signal"] = 1
+        out.loc[reclaim_short & flat_regime, "signal"] = -1
+        return out
+
+    if variant == "Reclaim + flat + vol guard":
+        atr_pct = out["atr"] / out["close"].replace(0.0, float("nan"))
+        vol_ceiling = atr_pct.rolling(200, min_periods=100).quantile(0.80)
+        vol_floor = atr_pct.rolling(200, min_periods=100).quantile(0.20)
+        normal_vol = (atr_pct <= vol_ceiling) & (atr_pct >= vol_floor)
+
+        out.loc[reclaim_long & flat_regime & normal_vol, "signal"] = 1
+        out.loc[reclaim_short & flat_regime & normal_vol, "signal"] = -1
+        return out
+
+    raise ValueError(f"Unknown mean-reversion variant: {variant}")
