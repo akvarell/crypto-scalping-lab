@@ -31,15 +31,17 @@ def add_indicators(
     df: pd.DataFrame,
     ema_fast: int = 9,
     ema_slow: int = 21,
+    trend_ema: int = 100,
     rsi_period: int = 14,
-    rsi_long: int = 52,
-    rsi_short: int = 48,
     atr_period: int = 14,
+    volume_period: int = 20,
 ) -> pd.DataFrame:
     out = df.copy()
     out["ema_fast"] = out["close"].ewm(span=ema_fast, adjust=False).mean()
     out["ema_slow"] = out["close"].ewm(span=ema_slow, adjust=False).mean()
+    out["trend_ema"] = out["close"].ewm(span=trend_ema, adjust=False).mean()
     out["rsi"] = _rsi(out["close"], rsi_period)
     out["atr"] = _atr(out, atr_period)
-    out["volume_sma"] = out["volume"].rolling(20, min_periods=1).mean()
+    out["volume_sma"] = out["volume"].rolling(volume_period, min_periods=1).mean()
+    out["volume_ratio"] = out["volume"] / out["volume_sma"].replace(0.0, float("nan"))
     return out
