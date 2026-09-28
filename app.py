@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.backtest import run_backtest
 from src.data import fetch_ohlcv
+from src.edge_diagnostics import evaluate_edge_diagnostics
 from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
@@ -82,7 +83,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v0.7")
+st.title("Crypto Scalping Lab v0.8")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -604,6 +605,122 @@ if mr_summary is not None:
                         shown_mr_details[col] = shown_mr_details[col].round(2)
                 st.dataframe(shown_mr_details, use_container_width=True, hide_index=True)
 
+st.subheader("Edge Diagnostics · v0.8")
+st.caption(
+    "This diagnostic does not optimize parameters. It keeps the fixed v0.7 Extreme-entry "
+    "Mean Reversion rule and asks two questions: does the signal have any edge before costs, "
+    "and is the weakness concentrated in LONG or SHORT trades?"
+)
+
+ed1, ed2, ed3 = st.columns(3)
+with ed1:
+    edge_folds = st.slider(
+        "Diagnostic folds",
+        min_value=2,
+        max_value=5,
+        value=3,
+        step=1,
+        key="edge_folds",
+    )
+with ed2:
+    edge_calibration_pct = st.slider(
+        "Diagnostic calibration share",
+        min_value=25,
+        max_value=60,
+        value=40,
+        step=5,
+        key="edge_calibration_pct",
+    )
+with ed3:
+    edge_min_trades = st.number_input(
+        "Minimum trades per diagnostic fold",
+        min_value=3,
+        max_value=50,
+        value=8,
+        step=1,
+        key="edge_min_trades",
+    )
+
+edge_signature = (
+    symbol,
+    timeframe,
+    int(limit),
+    int(rsi_period),
+    int(atr_period),
+    float(start_cash),
+    float(fee_bps),
+    float(slippage_bps),
+    int(edge_folds),
+    int(edge_calibration_pct),
+    int(edge_min_trades),
+)
+
+run_edge = st.button(
+    "Run edge diagnostics",
+    use_container_width=True,
+    key="run_edge_diagnostics",
+)
+
+if run_edge:
+    with st.spinner("Separating gross edge, trading costs, LONG and SHORT..."):
+        edge_summary, edge_details = evaluate_edge_diagnostics(
+            raw_df,
+            folds=int(edge_folds),
+            calibration_pct=int(edge_calibration_pct),
+            rsi_period=int(rsi_period),
+            atr_period=int(atr_period),
+            start_cash=float(start_cash),
+            fee_bps=float(fee_bps),
+            slippage_bps=float(slippage_bps),
+            min_fold_trades=int(edge_min_trades),
+        )
+        st.session_state["edge_summary"] = edge_summary
+        st.session_state["edge_details"] = edge_details
+        st.session_state["edge_signature"] = edge_signature
+
+edge_summary = st.session_state.get("edge_summary")
+edge_details = st.session_state.get("edge_details")
+saved_edge_signature = st.session_state.get("edge_signature")
+
+if edge_summary is not None:
+    if saved_edge_signature != edge_signature:
+        st.info("Edge diagnostic settings changed. Run the diagnostics again.")
+    else:
+        shown_edge = edge_summary.copy()
+        for col in [
+            "Gross avg return %",
+            "Net avg return %",
+            "Net median return %",
+            "Cost drag pp",
+            "Gross avg PF",
+            "Net avg PF",
+            "Net worst fold %",
+            "Net worst DD %",
+        ]:
+            if col in shown_edge:
+                shown_edge[col] = shown_edge[col].round(2)
+
+        st.dataframe(shown_edge, use_container_width=True, hide_index=True)
+        st.caption(
+            "If gross results are already negative, the entry rule itself lacks evidence of an edge. "
+            "If gross is positive but net turns negative, costs/execution are a major part of the problem."
+        )
+
+        if edge_details is not None:
+            with st.expander("Edge diagnostic fold details"):
+                shown_edge_details = edge_details.copy()
+                for col in [
+                    "Gross return %",
+                    "Net return %",
+                    "Cost drag pp",
+                    "Gross PF",
+                    "Net PF",
+                    "Net DD %",
+                ]:
+                    if col in shown_edge_details:
+                        shown_edge_details[col] = shown_edge_details[col].round(2)
+                st.dataframe(shown_edge_details, use_container_width=True, hide_index=True)
+
 st.subheader("Parameter optimizer")
 st.caption(
     "Quick search ranks combinations using TRAIN only, then reports TEST results without "
@@ -862,7 +979,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v0.7 logic and backtest assumptions"):
+with st.expander("v0.8 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
