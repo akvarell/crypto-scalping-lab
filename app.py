@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.backtest import run_backtest
 from src.data import fetch_ohlcv
+from src.direction_regime_study import run_direction_regime_study
 from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
 from src.event_edge_study import run_event_edge_study
@@ -90,7 +91,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.6")
+st.title("Crypto Scalping Lab v1.7")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -1369,6 +1370,109 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("Direction × BTC Regime Study · v1.7")
+st.caption(
+    "The v1.6 event study showed a clear LONG/SHORT asymmetry. This study keeps the same fixed breakout event "
+    "definition and splits results by trade direction and BTC regime. BTC regime is classified from trailing "
+    "24h return plus 5m EMA structure; no future bars are used for regime classification."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The regime study uses those historical selections.")
+else:
+    dr1, dr2, dr3 = st.columns(3)
+    with dr1:
+        regime_periods = st.select_slider(
+            "Periods to study",
+            options=[4, 8, 12],
+            value=12,
+            key="regime_periods",
+        )
+    with dr2:
+        st.metric("Round-trip cost", f"{2 * (float(scalp_fee_bps) + float(scalp_slippage_bps)):.1f} bps")
+    with dr3:
+        st.metric("Event cooldown", "60 min")
+
+    regime_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(regime_periods),
+        float(scalp_fee_bps),
+        float(scalp_slippage_bps),
+    )
+
+    run_regime = st.button(
+        "Run direction × BTC regime study",
+        use_container_width=True,
+        key="run_direction_regime_study",
+    )
+
+    if run_regime:
+        with st.spinner("Splitting breakout events by LONG/SHORT and BTC regime..."):
+            try:
+                regime_summary, regime_details = run_direction_regime_study(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(scalp_fee_bps),
+                    slippage_bps=float(scalp_slippage_bps),
+                    max_periods=int(regime_periods),
+                )
+                st.session_state["regime_summary"] = regime_summary
+                st.session_state["regime_details"] = regime_details
+                st.session_state["regime_signature"] = regime_signature
+            except Exception as exc:
+                st.error(f"Direction × BTC regime study failed: {exc}")
+
+    regime_summary = st.session_state.get("regime_summary")
+    regime_details = st.session_state.get("regime_details")
+    saved_regime_signature = st.session_state.get("regime_signature")
+
+    if regime_summary is not None:
+        if saved_regime_signature != regime_signature:
+            st.info("Regime-study settings changed. Run it again to refresh the results.")
+        else:
+            shown_regime = regime_summary.copy()
+            for col in [
+                "Gross avg bps",
+                "Gross median bps",
+                "Net avg bps",
+                "Net positive events %",
+                "Round-trip cost bps",
+                "Gross edge / cost",
+            ]:
+                if col in shown_regime:
+                    shown_regime[col] = shown_regime[col].round(2)
+
+            st.dataframe(
+                shown_regime,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Because the previous 12 weeks led us to investigate direction/regime asymmetry, these rows are "
+                "development diagnostics rather than a final holdout result. A promising pattern must later be "
+                "tested on a different historical window."
+            )
+
+            if regime_details is not None and not regime_details.empty:
+                with st.expander("Direction/regime event details"):
+                    shown_regime_details = regime_details.copy()
+                    for col in [
+                        "Gross bps",
+                        "Net bps",
+                        "BTC corr",
+                        "Volume ratio",
+                        "Range / ATR",
+                        "Relative move / ATR",
+                    ]:
+                        if col in shown_regime_details:
+                            shown_regime_details[col] = shown_regime_details[col].round(2)
+                    st.dataframe(
+                        shown_regime_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -1959,7 +2063,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.6 logic and backtest assumptions"):
+with st.expander("v1.7 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
