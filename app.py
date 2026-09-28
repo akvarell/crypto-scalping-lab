@@ -79,9 +79,9 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v0.3")
+st.title("Crypto Scalping Lab v0.4")
 st.caption(
-    "Research/backtesting only · Public Kraken market data · "
+    "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
 )
 
@@ -89,15 +89,15 @@ with st.sidebar:
     st.header("Market")
     symbol = st.selectbox(
         "Symbol",
-        ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"],
+        ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD"],
         index=0,
     )
     timeframe = st.selectbox(
         "Timeframe",
-        ["1m", "5m", "15m", "30m", "1h"],
+        ["1m", "5m", "15m", "1h"],
         index=1,
     )
-    limit = st.slider("Candles", 300, 700, 600, 50)
+    limit = st.slider("Candles", 1000, 5000, 3000, 500)
 
     st.header("Entry strategy")
     ema_fast = st.number_input("Fast EMA", min_value=2, max_value=100, value=9, step=1)
@@ -185,7 +185,7 @@ else:
     rr = None
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_market(symbol: str, timeframe: str, limit: int):
     return fetch_ohlcv(symbol=symbol, timeframe=timeframe, limit=limit)
 
@@ -200,6 +200,12 @@ except Exception as exc:
 if refresh:
     load_market.clear()
     st.rerun()
+
+if len(raw_df) < int(limit * 0.8):
+    st.warning(
+        f"Requested {limit} candles but received only {len(raw_df)}. "
+        "Results may use a smaller sample than expected."
+    )
 
 df = add_indicators(
     raw_df,
@@ -379,7 +385,7 @@ else:
     st.subheader("Trades")
     render_trades(full_result)
 
-st.subheader("Parameter optimizer · v0.3")
+st.subheader("Parameter optimizer · v0.4")
 st.caption(
     "Quick search ranks combinations using TRAIN only, then reports TEST results without "
     "using TEST to choose the ranking. This is a coarse research tool, not a guarantee of future performance."
@@ -403,10 +409,30 @@ with opt2:
         key="optimizer_top_n",
     )
 
+sample1, sample2 = st.columns(2)
+with sample1:
+    min_train_trades = st.number_input(
+        "Minimum TRAIN trades",
+        min_value=5,
+        max_value=200,
+        value=25,
+        step=5,
+    )
+with sample2:
+    min_test_trades = st.number_input(
+        "Minimum TEST trades",
+        min_value=3,
+        max_value=100,
+        value=10,
+        step=1,
+    )
+
 candidate_count = 324 if use_trend_filter else 108
 st.caption(
     f"Quick grid: {candidate_count} combinations · EMA + RSI thresholds + ATR stop/take"
     + (" + Trend EMA." if use_trend_filter else ".")
+    + f" TRAIN rows below {int(min_train_trades)} trades are heavily penalized; "
+    + f"TEST rows below {int(min_test_trades)} trades are marked LOW SAMPLE."
 )
 
 optimizer_signature = (
@@ -424,6 +450,8 @@ optimizer_signature = (
     float(fee_bps),
     float(slippage_bps),
     int(optimizer_top_n),
+    int(min_train_trades),
+    int(min_test_trades),
 )
 
 run_optimizer = st.button(
@@ -450,6 +478,8 @@ if run_optimizer:
             start_cash=float(start_cash),
             fee_bps=float(fee_bps),
             slippage_bps=float(slippage_bps),
+            min_train_trades=int(min_train_trades),
+            min_test_trades=int(min_test_trades),
             top_n=int(optimizer_top_n),
         )
         st.session_state["optimizer_results"] = opt_results
@@ -475,7 +505,13 @@ if stored_results is not None:
                 shown_opt[col] = shown_opt[col].round(2)
         for col in ["Train PF", "Test PF", "Score"]:
             if col in shown_opt:
-                shown_opt[col] = shown_opt[col].replace([float("inf")], 999.0).round(2)
+                shown_opt[col] = shown_opt[col].round(2)
+
+        for col in ["Train PF", "Test PF"]:
+            if col in shown_opt:
+                shown_opt[col] = shown_opt[col].map(
+                    lambda x: "∞" if x == float("inf") else f"{x:.2f}"
+                )
 
         st.dataframe(shown_opt, use_container_width=True, hide_index=True)
         st.caption(
@@ -504,7 +540,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v0.3 logic and backtest assumptions"):
+with st.expander("v0.4 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
