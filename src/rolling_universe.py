@@ -231,11 +231,12 @@ def run_rolling_universe_validation(
     pool_size: int = 20,
     select_top_n: int = 5,
     min_daily_turnover_usd: float = 5_000_000.0,
+    end_offset_days: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Validate whether the screener predicts next-period opportunity.
 
-    v1.1 removes the v1.0 current-volume look-ahead: each historical candidate
-    pool is built from trailing historical daily turnover at that date.
+    Historical candidate pools are built from trailing daily turnover known at
+    each selection date. end_offset_days allows non-overlapping older holdouts.
 
     Remaining caveat: the master symbol list is still based on pairs trading
     today, so delisted assets are not reconstructed yet.
@@ -246,7 +247,11 @@ def run_rolling_universe_validation(
     pool_size = max(10, min(int(pool_size), 50))
     select_top_n = max(1, min(int(select_top_n), 10))
 
-    now = pd.Timestamp.now(tz="UTC").floor("h")
+    end_offset_days = max(0, min(int(end_offset_days), 730))
+    now = (
+        pd.Timestamp.now(tz="UTC").floor("h")
+        - pd.Timedelta(days=end_offset_days)
+    )
     analysis_start = now - pd.Timedelta(days=horizon_days)
     history_start = analysis_start - pd.Timedelta(days=lookback_days + 2)
 
