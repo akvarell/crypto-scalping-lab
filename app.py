@@ -9,6 +9,7 @@ from src.data import fetch_ohlcv
 from src.indicators import add_indicators
 from src.optimizer import optimize_quick
 from src.strategy import generate_signals
+from src.walkforward import evaluate_walk_forward
 
 st.set_page_config(page_title="Crypto Scalping Lab", page_icon="📈", layout="wide")
 
@@ -79,7 +80,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v0.4")
+st.title("Crypto Scalping Lab v0.5")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -385,7 +386,7 @@ else:
     st.subheader("Trades")
     render_trades(full_result)
 
-st.subheader("Parameter optimizer · v0.4")
+st.subheader("Parameter optimizer")
 st.caption(
     "Quick search ranks combinations using TRAIN only, then reports TEST results without "
     "using TEST to choose the ranking. This is a coarse research tool, not a guarantee of future performance."
@@ -528,6 +529,109 @@ if stored_results is not None:
             f"Stop {first['Stop ATR']:.2f} ATR, Take {first['Take ATR']:.2f} ATR."
         )
 
+        st.subheader("Walk-forward validation · v0.5")
+        st.caption(
+            "The same TRAIN-ranked candidates are checked across several sequential future windows. "
+            "Their original TRAIN order is preserved; walk-forward results do not re-rank them."
+        )
+
+        wf1, wf2, wf3 = st.columns(3)
+        with wf1:
+            wf_folds = st.slider(
+                "Future folds",
+                min_value=2,
+                max_value=5,
+                value=3,
+                step=1,
+                key="wf_folds",
+            )
+        with wf2:
+            wf_calibration_pct = st.slider(
+                "Initial calibration share",
+                min_value=25,
+                max_value=60,
+                value=40,
+                step=5,
+                key="wf_calibration_pct",
+            )
+        with wf3:
+            wf_min_trades = st.number_input(
+                "Minimum trades per fold",
+                min_value=3,
+                max_value=50,
+                value=8,
+                step=1,
+                key="wf_min_trades",
+            )
+
+        wf_signature = (
+            optimizer_signature,
+            int(wf_folds),
+            int(wf_calibration_pct),
+            int(wf_min_trades),
+        )
+
+        run_wf = st.button(
+            "Run walk-forward validation",
+            use_container_width=True,
+            key="run_walk_forward",
+        )
+
+        if run_wf:
+            with st.spinner(f"Checking {len(stored_results)} candidates across {wf_folds} future folds..."):
+                wf_summary, wf_details = evaluate_walk_forward(
+                    raw_df,
+                    stored_results,
+                    folds=int(wf_folds),
+                    calibration_pct=int(wf_calibration_pct),
+                    rsi_period=int(rsi_period),
+                    atr_period=int(atr_period),
+                    use_trend_filter=bool(use_trend_filter),
+                    use_volume_filter=bool(use_volume_filter),
+                    min_volume_ratio=float(min_volume_ratio),
+                    start_cash=float(start_cash),
+                    fee_bps=float(fee_bps),
+                    slippage_bps=float(slippage_bps),
+                    min_fold_trades=int(wf_min_trades),
+                )
+                st.session_state["wf_summary"] = wf_summary
+                st.session_state["wf_details"] = wf_details
+                st.session_state["wf_signature"] = wf_signature
+
+        wf_summary = st.session_state.get("wf_summary")
+        wf_details = st.session_state.get("wf_details")
+        saved_wf_signature = st.session_state.get("wf_signature")
+
+        if wf_summary is not None:
+            if saved_wf_signature != wf_signature:
+                st.info("Walk-forward settings changed. Run validation again to refresh the results.")
+            else:
+                shown_wf = wf_summary.copy()
+                for col in [
+                    "Median return %",
+                    "Average return %",
+                    "Worst fold %",
+                    "Best fold %",
+                    "Average PF",
+                    "Worst DD %",
+                ]:
+                    if col in shown_wf:
+                        shown_wf[col] = shown_wf[col].round(2)
+
+                st.dataframe(shown_wf, use_container_width=True, hide_index=True)
+                st.caption(
+                    "A stronger research result would show positive performance across multiple folds "
+                    "with enough trades in each fold, rather than one unusually good window."
+                )
+
+                if wf_details is not None:
+                    with st.expander("Walk-forward fold details"):
+                        shown_details = wf_details.copy()
+                        for col in ["Return %", "PF", "DD %"]:
+                            if col in shown_details:
+                                shown_details[col] = shown_details[col].round(2)
+                        st.dataframe(shown_details, use_container_width=True, hide_index=True)
+
 st.subheader("Current market snapshot")
 latest = df.iloc[-1]
 snap1, snap2, snap3, snap4 = st.columns(4)
@@ -540,7 +644,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v0.4 logic and backtest assumptions"):
+with st.expander("v0.5 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
