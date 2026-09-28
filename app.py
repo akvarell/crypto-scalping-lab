@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.backtest import run_backtest
 from src.data import fetch_ohlcv
+from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
 from src.optimizer import optimize_quick
 from src.strategy import generate_signals
@@ -80,7 +81,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v0.5")
+st.title("Crypto Scalping Lab v0.6")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -386,6 +387,112 @@ else:
     st.subheader("Trades")
     render_trades(full_result)
 
+st.subheader("Strategy family benchmark · v0.6")
+st.caption(
+    "Four fixed reference strategies are compared on the same sequential future windows. "
+    "No family is tuned or re-ranked using these future folds."
+)
+
+fam1, fam2, fam3 = st.columns(3)
+with fam1:
+    family_folds = st.slider(
+        "Benchmark folds",
+        min_value=2,
+        max_value=5,
+        value=3,
+        step=1,
+        key="family_folds",
+    )
+with fam2:
+    family_calibration_pct = st.slider(
+        "Benchmark calibration share",
+        min_value=25,
+        max_value=60,
+        value=40,
+        step=5,
+        key="family_calibration_pct",
+    )
+with fam3:
+    family_min_trades = st.number_input(
+        "Minimum trades per benchmark fold",
+        min_value=3,
+        max_value=50,
+        value=8,
+        step=1,
+        key="family_min_trades",
+    )
+
+family_signature = (
+    symbol,
+    timeframe,
+    int(limit),
+    int(rsi_period),
+    int(atr_period),
+    float(start_cash),
+    float(fee_bps),
+    float(slippage_bps),
+    int(family_folds),
+    int(family_calibration_pct),
+    int(family_min_trades),
+)
+
+run_family_benchmark = st.button(
+    "Run strategy family benchmark",
+    use_container_width=True,
+    key="run_family_benchmark",
+)
+
+if run_family_benchmark:
+    with st.spinner("Comparing fixed strategy families across future folds..."):
+        family_summary, family_details = benchmark_families(
+            raw_df,
+            folds=int(family_folds),
+            calibration_pct=int(family_calibration_pct),
+            rsi_period=int(rsi_period),
+            atr_period=int(atr_period),
+            start_cash=float(start_cash),
+            fee_bps=float(fee_bps),
+            slippage_bps=float(slippage_bps),
+            min_fold_trades=int(family_min_trades),
+        )
+        st.session_state["family_summary"] = family_summary
+        st.session_state["family_details"] = family_details
+        st.session_state["family_signature"] = family_signature
+
+family_summary = st.session_state.get("family_summary")
+family_details = st.session_state.get("family_details")
+saved_family_signature = st.session_state.get("family_signature")
+
+if family_summary is not None:
+    if saved_family_signature != family_signature:
+        st.info("Benchmark settings changed. Run the strategy family benchmark again.")
+    else:
+        shown_family = family_summary.copy()
+        for col in [
+            "Median return %",
+            "Average return %",
+            "Worst fold %",
+            "Best fold %",
+            "Average PF",
+            "Worst DD %",
+        ]:
+            if col in shown_family:
+                shown_family[col] = shown_family[col].round(2)
+
+        st.dataframe(shown_family, use_container_width=True, hide_index=True)
+        st.caption(
+            "Interpret the table as a robustness check: repeated positive folds with adequate trade counts "
+            "are more informative than one isolated positive period."
+        )
+
+        if family_details is not None:
+            with st.expander("Strategy family fold details"):
+                shown_family_details = family_details.copy()
+                for col in ["Return %", "PF", "DD %"]:
+                    if col in shown_family_details:
+                        shown_family_details[col] = shown_family_details[col].round(2)
+                st.dataframe(shown_family_details, use_container_width=True, hide_index=True)
+
 st.subheader("Parameter optimizer")
 st.caption(
     "Quick search ranks combinations using TRAIN only, then reports TEST results without "
@@ -644,12 +751,14 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v0.5 logic and backtest assumptions"):
+with st.expander("v0.6 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
         "Stops and targets are fixed from ATR at entry. If both stop and target are touched "
         "inside the same candle, the backtest conservatively counts the stop first. "
         "Fees and slippage are applied to every completed trade. The TEST tab is kept separate "
-        "from the earlier TRAIN candles to reduce the risk of judging settings only on the same sample."
+        "from the earlier TRAIN candles to reduce the risk of judging settings only on the same sample. "
+        "The v0.6 family benchmark uses fixed reference rules for EMA Cross, Trend Pullback, "
+        "Donchian Breakout, and Mean Reversion so different entry hypotheses can be compared before tuning."
     )
