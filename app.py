@@ -12,6 +12,7 @@ from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.optimizer import optimize_quick
 from src.strategy import generate_signals
+from src.universe import build_universe_screener
 from src.walkforward import evaluate_walk_forward
 
 st.set_page_config(page_title="Crypto Scalping Lab", page_icon="📈", layout="wide")
@@ -83,7 +84,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v0.8")
+st.title("Crypto Scalping Lab v0.9")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -388,6 +389,146 @@ else:
         )
     st.subheader("Trades")
     render_trades(full_result)
+
+st.subheader("Market Universe Screener · v0.9")
+st.caption(
+    "Select the research universe first: liquidity + volatility + activity. "
+    "BTC correlation is displayed as context and is not used in the research score. "
+    "This is a market-research screener, not a recommendation to trade a specific coin."
+)
+
+us1, us2, us3 = st.columns(3)
+with us1:
+    universe_size = st.slider(
+        "Liquid symbols to inspect",
+        min_value=10,
+        max_value=50,
+        value=30,
+        step=5,
+        key="universe_size",
+    )
+with us2:
+    universe_lookback = st.select_slider(
+        "Screener lookback",
+        options=[168, 336, 720],
+        value=336,
+        format_func=lambda x: {168: "7 days", 336: "14 days", 720: "30 days"}[x],
+        key="universe_lookback",
+    )
+with us3:
+    min_turnover_m = st.number_input(
+        "Minimum 24h turnover, $M",
+        min_value=1.0,
+        max_value=500.0,
+        value=10.0,
+        step=5.0,
+        key="min_turnover_m",
+    )
+
+run_universe = st.button(
+    "Build market universe",
+    use_container_width=True,
+    key="run_universe",
+)
+
+universe_signature = (
+    int(universe_size),
+    int(universe_lookback),
+    float(min_turnover_m),
+)
+
+if run_universe:
+    with st.spinner("Scanning liquid USDT pairs and calculating volatility/correlation..."):
+        try:
+            universe_df = build_universe_screener(
+                max_symbols=int(universe_size),
+                lookback_hours=int(universe_lookback),
+                min_quote_volume_usd=float(min_turnover_m) * 1_000_000.0,
+            )
+            st.session_state["universe_df"] = universe_df
+            st.session_state["universe_signature"] = universe_signature
+        except Exception as exc:
+            st.error(f"Universe screener could not load Binance public data: {exc}")
+
+universe_df = st.session_state.get("universe_df")
+saved_universe_signature = st.session_state.get("universe_signature")
+
+if universe_df is not None:
+    if saved_universe_signature != universe_signature:
+        st.info("Screener settings changed. Build the market universe again.")
+    else:
+        filter1, filter2, filter3 = st.columns(3)
+        with filter1:
+            min_atr_pct = st.slider(
+                "Minimum ATR %",
+                min_value=0.0,
+                max_value=10.0,
+                value=0.5,
+                step=0.1,
+                key="min_atr_pct",
+            )
+        with filter2:
+            min_realized_vol = st.slider(
+                "Minimum dailyized realized vol %",
+                min_value=0.0,
+                max_value=20.0,
+                value=1.5,
+                step=0.1,
+                key="min_realized_vol",
+            )
+        with filter3:
+            corr_abs_max = st.slider(
+                "Maximum |BTC correlation|",
+                min_value=0.0,
+                max_value=1.0,
+                value=1.0,
+                step=0.05,
+                key="corr_abs_max",
+            )
+
+        shown_universe = universe_df[
+            (universe_df["ATR %"] >= float(min_atr_pct))
+            & (universe_df["Dailyized realized vol %"] >= float(min_realized_vol))
+            & (universe_df["BTC corr"].abs() <= float(corr_abs_max))
+        ].copy()
+
+        for col in [
+            "24h turnover $",
+            "7d avg turnover $",
+            "24h change %",
+            "Dailyized realized vol %",
+            "ATR %",
+            "Avg abs 1h move %",
+            "BTC corr",
+            "7d avg trades/day",
+            "Research score",
+        ]:
+            if col in shown_universe:
+                shown_universe[col] = shown_universe[col].round(2)
+
+        display_cols = [
+            "Symbol",
+            "24h turnover $",
+            "7d avg turnover $",
+            "24h change %",
+            "Dailyized realized vol %",
+            "ATR %",
+            "Avg abs 1h move %",
+            "BTC corr",
+            "24h trades",
+            "7d avg trades/day",
+            "Research score",
+        ]
+        st.dataframe(
+            shown_universe[display_cols],
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "Research score = 30% liquidity + 35% realized volatility + 25% ATR rank + 10% activity. "
+            "BTC correlation is intentionally separate. For a historical strategy test, the universe "
+            "must be re-selected at each past date using only information available before that date."
+        )
 
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
@@ -979,7 +1120,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v0.8 logic and backtest assumptions"):
+with st.expander("v0.9 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
