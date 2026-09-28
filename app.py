@@ -317,7 +317,16 @@ if not shorts.empty:
     )
 
 if split_time is not None:
-    fig.add_vline(x=split_time, line_dash="dash", annotation_text="TEST starts")
+    split_x = split_time.isoformat()
+    fig.add_shape(
+        type="line",
+        x0=split_x,
+        x1=split_x,
+        y0=0,
+        y1=1,
+        yref="paper",
+        line={"dash": "dash"},
+    )
 
 fig.update_layout(
     height=650,
