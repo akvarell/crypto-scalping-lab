@@ -7,6 +7,7 @@ import streamlit as st
 from src.backtest import run_backtest
 from src.data import fetch_ohlcv
 from src.indicators import add_indicators
+from src.optimizer import optimize_quick
 from src.strategy import generate_signals
 
 st.set_page_config(page_title="Crypto Scalping Lab", page_icon="📈", layout="wide")
@@ -191,7 +192,7 @@ def load_market(symbol: str, timeframe: str, limit: int):
 
 try:
     with st.spinner("Loading market data..."):
-        df = load_market(symbol, timeframe, limit)
+        raw_df = load_market(symbol, timeframe, limit)
 except Exception as exc:
     st.error(f"Could not load market data: {exc}")
     st.stop()
@@ -201,7 +202,7 @@ if refresh:
     st.rerun()
 
 df = add_indicators(
-    df,
+    raw_df,
     ema_fast=int(ema_fast),
     ema_slow=int(ema_slow),
     trend_ema=int(trend_ema),
@@ -377,6 +378,119 @@ else:
         )
     st.subheader("Trades")
     render_trades(full_result)
+
+st.subheader("Parameter optimizer · v0.3")
+st.caption(
+    "Quick search ranks combinations using TRAIN only, then reports TEST results without "
+    "using TEST to choose the ranking. This is a coarse research tool, not a guarantee of future performance."
+)
+
+opt1, opt2 = st.columns([1, 1])
+with opt1:
+    optimizer_objective = st.selectbox(
+        "TRAIN objective",
+        ["Balanced", "Net return", "Profit factor"],
+        index=0,
+        key="optimizer_objective",
+    )
+with opt2:
+    optimizer_top_n = st.slider(
+        "Top TRAIN combinations to test",
+        min_value=3,
+        max_value=12,
+        value=8,
+        step=1,
+        key="optimizer_top_n",
+    )
+
+candidate_count = 324 if use_trend_filter else 108
+st.caption(
+    f"Quick grid: {candidate_count} combinations · EMA + RSI thresholds + ATR stop/take"
+    + (" + Trend EMA." if use_trend_filter else ".")
+)
+
+optimizer_signature = (
+    symbol,
+    timeframe,
+    int(limit),
+    int(train_pct) if use_split else None,
+    optimizer_objective,
+    int(rsi_period),
+    int(atr_period),
+    bool(use_trend_filter),
+    bool(use_volume_filter),
+    float(min_volume_ratio),
+    float(start_cash),
+    float(fee_bps),
+    float(slippage_bps),
+    int(optimizer_top_n),
+)
+
+run_optimizer = st.button(
+    "Run quick optimizer",
+    type="primary",
+    disabled=not use_split,
+    use_container_width=True,
+)
+
+if not use_split:
+    st.info("Enable Train / test split in the sidebar to use the optimizer.")
+
+if run_optimizer:
+    with st.spinner(f"Testing {candidate_count} TRAIN combinations..."):
+        opt_results = optimize_quick(
+            raw_df,
+            split_idx,
+            objective=optimizer_objective,
+            rsi_period=int(rsi_period),
+            atr_period=int(atr_period),
+            use_trend_filter=bool(use_trend_filter),
+            use_volume_filter=bool(use_volume_filter),
+            min_volume_ratio=float(min_volume_ratio),
+            start_cash=float(start_cash),
+            fee_bps=float(fee_bps),
+            slippage_bps=float(slippage_bps),
+            top_n=int(optimizer_top_n),
+        )
+        st.session_state["optimizer_results"] = opt_results
+        st.session_state["optimizer_signature"] = optimizer_signature
+
+stored_results = st.session_state.get("optimizer_results")
+stored_signature = st.session_state.get("optimizer_signature")
+
+if stored_results is not None:
+    if stored_signature != optimizer_signature:
+        st.info("Optimizer settings changed. Run the optimizer again to refresh this table.")
+    else:
+        shown_opt = stored_results.copy()
+        pct_cols = [
+            "Train return %",
+            "Train DD %",
+            "Test return %",
+            "Test DD %",
+            "Test win %",
+        ]
+        for col in pct_cols:
+            if col in shown_opt:
+                shown_opt[col] = shown_opt[col].round(2)
+        for col in ["Train PF", "Test PF", "Score"]:
+            if col in shown_opt:
+                shown_opt[col] = shown_opt[col].replace([float("inf")], 999.0).round(2)
+
+        st.dataframe(shown_opt, use_container_width=True, hide_index=True)
+        st.caption(
+            "Rows stay ordered by TRAIN score. TEST columns are shown only as an out-of-sample check; "
+            "they are not used to reorder the candidates."
+        )
+
+        first = stored_results.iloc[0]
+        st.markdown(
+            "**Top TRAIN-ranked parameters:** "
+            f"EMA {int(first['EMA fast'])}/{int(first['EMA slow'])}, "
+            f"Trend EMA {int(first['Trend EMA'])}, "
+            f"RSI {int(first['RSI long'])}/{int(first['RSI short'])}, "
+            f"Stop {first['Stop ATR']:.2f} ATR, Take {first['Take ATR']:.2f} ATR."
+        )
 
 st.subheader("Current market snapshot")
 latest = df.iloc[-1]
