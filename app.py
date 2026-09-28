@@ -85,7 +85,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.0")
+st.title("Crypto Scalping Lab v1.1")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -531,12 +531,12 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Rolling Universe Validation · v1.0")
+st.subheader("Rolling Universe Validation · v1.1")
 st.caption(
     "Long-distance validation of the screener itself. At each historical rebalance date, "
-    "symbols are ranked only with the preceding lookback window; the selected set is then "
-    "measured on the following period. This tests whether the screener finds future opportunity "
-    "before we attach a trading strategy."
+    "the candidate pool is rebuilt from historical trailing turnover at that date, then ranked "
+    "with only the preceding lookback window and measured on the following period. "
+    "This removes the v1.0 current-volume look-ahead before we attach a trading strategy."
 )
 
 ru1, ru2, ru3 = st.columns(3)
@@ -706,9 +706,10 @@ if rolling_summary is not None:
                 )
 
         st.warning(
-            "Research-stage caveat: this historical test uses a pool of symbols that are trading today, "
-            "so survivorship bias is not fully removed yet. A later production-grade version should "
-            "reconstruct historical listings/delistings as well."
+            "v1.1 removes the current-volume look-ahead from v1.0: historical candidate pools are "
+            "formed using turnover known at each past date. One research-stage limitation remains: "
+            "the master symbol list contains pairs that are trading today, so delisted assets are not "
+            "yet reconstructed and survivorship bias is not fully removed."
         )
 
 st.subheader("Strategy family benchmark · v0.6")
@@ -1301,7 +1302,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.0 logic and backtest assumptions"):
+with st.expander("v1.1 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
