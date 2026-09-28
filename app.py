@@ -14,6 +14,7 @@ from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
+from src.relative_event_lab import run_relative_event_lab
 from src.rolling_universe import run_rolling_universe_validation
 from src.strategy import generate_signals
 from src.universe import build_universe_screener
@@ -88,7 +89,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.4")
+st.title("Crypto Scalping Lab v1.5")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -1128,6 +1129,139 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("BTC-Relative Event Lab · v1.5")
+st.caption(
+    "Instead of trading every indicator extreme, this lab looks for rarer events in the already-selected "
+    "high-opportunity universe: abnormal volume, large 5-minute displacement, relative movement versus BTC, "
+    "and low-correlation breakouts. Entries still execute on the NEXT 5-minute bar open."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The event lab uses those historical selections.")
+else:
+    rel1, rel2, rel3 = st.columns(3)
+    with rel1:
+        relative_periods = st.select_slider(
+            "Periods to test",
+            options=[4, 8, 12],
+            value=12,
+            key="relative_periods",
+        )
+    with rel2:
+        st.metric("Round-trip cost", f"{2 * (float(scalp_fee_bps) + float(scalp_slippage_bps)):.1f} bps")
+    with rel3:
+        st.metric("Execution", "Next 5m open")
+
+    relative_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(relative_periods),
+        float(scalp_fee_bps),
+        float(scalp_slippage_bps),
+    )
+
+    run_relative = st.button(
+        "Run BTC-relative event lab",
+        use_container_width=True,
+        key="run_relative_event_lab",
+    )
+
+    if run_relative:
+        with st.spinner(
+            "Testing volume shocks, BTC-relative momentum, decorrelation breakouts and capitulation..."
+        ):
+            try:
+                relative_summary, relative_period_table, relative_details = run_relative_event_lab(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(scalp_fee_bps),
+                    slippage_bps=float(scalp_slippage_bps),
+                    max_periods=int(relative_periods),
+                )
+                st.session_state["relative_summary"] = relative_summary
+                st.session_state["relative_period_table"] = relative_period_table
+                st.session_state["relative_details"] = relative_details
+                st.session_state["relative_signature"] = relative_signature
+            except Exception as exc:
+                st.error(f"BTC-relative event lab failed: {exc}")
+
+    relative_summary = st.session_state.get("relative_summary")
+    relative_period_table = st.session_state.get("relative_period_table")
+    relative_details = st.session_state.get("relative_details")
+    saved_relative_signature = st.session_state.get("relative_signature")
+
+    if relative_summary is not None:
+        if saved_relative_signature != relative_signature:
+            st.info("Event-lab settings changed. Run it again to refresh the results.")
+        else:
+            shown_relative = relative_summary.copy()
+            for col in [
+                "Avg gross return %",
+                "Avg net return %",
+                "Median net return %",
+                "Compounded net %",
+                "Gross avg trade bps",
+                "Net avg trade bps",
+                "Round-trip cost bps",
+                "Gross edge / cost",
+                "Avg net PF",
+                "Worst period %",
+                "Best period %",
+            ]:
+                if col in shown_relative:
+                    shown_relative[col] = shown_relative[col].round(3)
+
+            st.dataframe(
+                shown_relative,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Gross avg trade bps is the key diagnostic. With the current cost assumption, a signal whose "
+                "gross expectancy per trade does not comfortably exceed round-trip cost is unlikely to survive "
+                "fees and slippage. Gross edge / cost above 1 only means breakeven-before-variance, not robustness."
+            )
+
+            if relative_period_table is not None and not relative_period_table.empty:
+                with st.expander("Event-lab weekly portfolio results"):
+                    shown_relative_periods = relative_period_table.copy()
+                    for col in [
+                        "Gross portfolio return %",
+                        "Net portfolio return %",
+                        "Cost drag pp",
+                        "Gross avg trade bps",
+                        "Net avg trade bps",
+                    ]:
+                        if col in shown_relative_periods:
+                            shown_relative_periods[col] = shown_relative_periods[col].round(3)
+                    st.dataframe(
+                        shown_relative_periods,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            if relative_details is not None and not relative_details.empty:
+                with st.expander("Event-lab per-coin results"):
+                    shown_relative_details = relative_details.copy()
+                    for col in [
+                        "Gross return %",
+                        "Net return %",
+                        "Cost drag pp",
+                        "Gross PF",
+                        "Net PF",
+                        "Gross avg trade bps",
+                        "Net avg trade bps",
+                        "Win rate %",
+                        "Max DD %",
+                    ]:
+                        if col in shown_relative_details:
+                            shown_relative_details[col] = shown_relative_details[col].round(3)
+                    st.dataframe(
+                        shown_relative_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -1718,7 +1852,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.4 logic and backtest assumptions"):
+with st.expander("v1.5 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
