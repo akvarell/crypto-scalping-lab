@@ -8,6 +8,7 @@ from src.backtest import run_backtest
 from src.data import fetch_ohlcv
 from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
+from src.event_edge_study import run_event_edge_study
 from src.execution_reality import run_execution_reality_check
 from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
@@ -89,7 +90,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.5")
+st.title("Crypto Scalping Lab v1.6")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -1262,6 +1263,112 @@ else:
                         hide_index=True,
                     )
 
+st.subheader("Event Edge Study · v1.6")
+st.caption(
+    "This study isolates the raw predictive value of BTC-relative breakout events. "
+    "It uses next-bar entry, a 60-minute per-symbol cooldown, and fixed exits after 15/30/60 minutes. "
+    "The goal is to see whether stronger event quality actually produces gross expectancy above trading costs."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The event study uses those historical selections.")
+else:
+    ee1, ee2, ee3 = st.columns(3)
+    with ee1:
+        edge_study_periods = st.select_slider(
+            "Periods to study",
+            options=[4, 8, 12],
+            value=12,
+            key="edge_study_periods",
+        )
+    with ee2:
+        st.metric("Round-trip cost", f"{2 * (float(scalp_fee_bps) + float(scalp_slippage_bps)):.1f} bps")
+    with ee3:
+        st.metric("Event cooldown", "60 min")
+
+    edge_study_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(edge_study_periods),
+        float(scalp_fee_bps),
+        float(scalp_slippage_bps),
+    )
+
+    run_edge_study = st.button(
+        "Run event edge study",
+        use_container_width=True,
+        key="run_event_edge_study",
+    )
+
+    if run_edge_study:
+        with st.spinner(
+            "Measuring next-bar forward returns after base, strong and extreme breakout events..."
+        ):
+            try:
+                event_edge_summary, event_edge_details = run_event_edge_study(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(scalp_fee_bps),
+                    slippage_bps=float(scalp_slippage_bps),
+                    max_periods=int(edge_study_periods),
+                )
+                st.session_state["event_edge_summary"] = event_edge_summary
+                st.session_state["event_edge_details"] = event_edge_details
+                st.session_state["event_edge_signature"] = edge_study_signature
+            except Exception as exc:
+                st.error(f"Event edge study failed: {exc}")
+
+    event_edge_summary = st.session_state.get("event_edge_summary")
+    event_edge_details = st.session_state.get("event_edge_details")
+    saved_event_edge_signature = st.session_state.get("event_edge_signature")
+
+    if event_edge_summary is not None:
+        if saved_event_edge_signature != edge_study_signature:
+            st.info("Event-study settings changed. Run it again to refresh the results.")
+        else:
+            shown_event_edge = event_edge_summary.copy()
+            for col in [
+                "Gross avg bps",
+                "Gross median bps",
+                "Net avg bps",
+                "Net positive events %",
+                "LONG gross avg bps",
+                "SHORT gross avg bps",
+                "Round-trip cost bps",
+                "Gross edge / cost",
+            ]:
+                if col in shown_event_edge:
+                    shown_event_edge[col] = shown_event_edge[col].round(2)
+
+            st.dataframe(
+                shown_event_edge,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "The key question is whether stricter event tiers raise gross average bps above the cost line. "
+                "A small number of events can look impressive by chance, so event count and positive periods matter too."
+            )
+
+            if event_edge_details is not None and not event_edge_details.empty:
+                with st.expander("Event-level details"):
+                    shown_event_details = event_edge_details.copy()
+                    for col in [
+                        "Gross bps",
+                        "Net bps",
+                        "Volume ratio",
+                        "Range / ATR",
+                        "BTC corr",
+                        "Relative move / ATR",
+                    ]:
+                        if col in shown_event_details:
+                            shown_event_details[col] = shown_event_details[col].round(2)
+                    st.dataframe(
+                        shown_event_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -1852,7 +1959,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.5 logic and backtest assumptions"):
+with st.expander("v1.6 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
