@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.backtest import run_backtest
 from src.data import fetch_ohlcv
+from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
 from src.family_benchmark import benchmark_families
 from src.indicators import add_indicators
@@ -85,7 +86,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v1.1")
+st.title("Crypto Scalping Lab v1.2")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -712,6 +713,151 @@ if rolling_summary is not None:
             "yet reconstructed and survivorship bias is not fully removed."
         )
 
+st.subheader("Dynamic Universe Scalping Backtest · v1.2")
+st.caption(
+    "This is the first end-to-end test of the intended workflow: historical screener selection -> "
+    "next-period 5-minute data -> fixed scalping rules -> fees/slippage -> equal-weight weekly portfolio. "
+    "It does not use the future week to choose the coins."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. The scalping backtest uses its historical selections.")
+else:
+    ds1, ds2, ds3 = st.columns(3)
+    with ds1:
+        scalp_periods_to_test = st.select_slider(
+            "Periods to backtest",
+            options=[4, 8, 12],
+            value=12,
+            key="scalp_periods_to_test",
+        )
+    with ds2:
+        scalp_fee_bps = st.number_input(
+            "Scalping fee per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=float(fee_bps),
+            step=0.5,
+            key="scalp_fee_bps",
+        )
+    with ds3:
+        scalp_slippage_bps = st.number_input(
+            "Scalping slippage per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=max(float(slippage_bps), 2.0),
+            step=0.5,
+            key="scalp_slippage_bps",
+        )
+
+    scalp_signature = (
+        saved_rolling_signature,
+        int(rolling_forward),
+        int(scalp_periods_to_test),
+        float(scalp_fee_bps),
+        float(scalp_slippage_bps),
+    )
+
+    run_scalping = st.button(
+        "Run dynamic-universe 5m scalping backtest",
+        use_container_width=True,
+        key="run_dynamic_scalping",
+    )
+
+    if run_scalping:
+        with st.spinner(
+            "Downloading the selected coins' 5-minute candles and testing fixed strategies..."
+        ):
+            try:
+                scalp_summary, scalp_periods, scalp_details = run_dynamic_universe_scalping(
+                    rolling_details,
+                    forward_days=int(rolling_forward),
+                    fee_bps=float(scalp_fee_bps),
+                    slippage_bps=float(scalp_slippage_bps),
+                    max_periods=int(scalp_periods_to_test),
+                )
+                st.session_state["scalp_summary"] = scalp_summary
+                st.session_state["scalp_periods"] = scalp_periods
+                st.session_state["scalp_details"] = scalp_details
+                st.session_state["scalp_signature"] = scalp_signature
+                st.session_state["scalp_failed_pairs"] = int(
+                    scalp_summary.attrs.get("failed_pairs", 0)
+                )
+            except Exception as exc:
+                st.error(f"Dynamic scalping backtest failed: {exc}")
+
+    scalp_summary = st.session_state.get("scalp_summary")
+    scalp_periods = st.session_state.get("scalp_periods")
+    scalp_details = st.session_state.get("scalp_details")
+    saved_scalp_signature = st.session_state.get("scalp_signature")
+
+    if scalp_summary is not None:
+        if saved_scalp_signature != scalp_signature:
+            st.info("Scalping settings changed. Run the dynamic-universe backtest again.")
+        else:
+            shown_scalp = scalp_summary.copy()
+            for col in [
+                "Avg gross return %",
+                "Avg net return %",
+                "Median net return %",
+                "Compounded gross %",
+                "Compounded net %",
+                "Avg cost drag pp",
+                "Worst period %",
+                "Best period %",
+                "Avg net PF",
+            ]:
+                if col in shown_scalp:
+                    shown_scalp[col] = shown_scalp[col].round(2)
+
+            st.dataframe(shown_scalp, use_container_width=True, hide_index=True)
+            failed_pairs = int(st.session_state.get("scalp_failed_pairs", 0))
+            st.caption(
+                "Weekly portfolio return is the equal-weight average of the selected coins' returns. "
+                "Gross uses zero fees/slippage; Net uses the costs entered above. "
+                f"Skipped symbol-periods with insufficient 5m data: {failed_pairs}."
+            )
+
+            if scalp_periods is not None and not scalp_periods.empty:
+                with st.expander("Weekly portfolio results"):
+                    shown_periods = scalp_periods.copy()
+                    for col in [
+                        "Gross portfolio return %",
+                        "Net portfolio return %",
+                        "Cost drag pp",
+                        "Avg win rate %",
+                        "Avg max DD %",
+                    ]:
+                        if col in shown_periods:
+                            shown_periods[col] = shown_periods[col].round(2)
+                    st.dataframe(
+                        shown_periods,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            if scalp_details is not None and not scalp_details.empty:
+                with st.expander("Per-coin 5m results"):
+                    shown_details = scalp_details.copy()
+                    for col in [
+                        "Gross return %",
+                        "Net return %",
+                        "Cost drag pp",
+                        "Gross PF",
+                        "Net PF",
+                        "Win rate %",
+                        "Max DD %",
+                        "Long P&L",
+                        "Short P&L",
+                    ]:
+                        if col in shown_details:
+                            shown_details[col] = shown_details[col].round(2)
+                    st.dataframe(
+                        shown_details,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -1302,7 +1448,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v1.1 logic and backtest assumptions"):
+with st.expander("v1.2 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
