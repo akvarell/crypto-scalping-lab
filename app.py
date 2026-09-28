@@ -1606,6 +1606,26 @@ with ho2:
 with ho3:
     st.metric("Rules", "Frozen")
 
+hc1, hc2 = st.columns(2)
+with hc1:
+    holdout_fee_bps = st.number_input(
+        "Holdout fee per side, bps",
+        min_value=0.0,
+        max_value=20.0,
+        value=4.0,
+        step=0.5,
+        key="holdout_fee_bps",
+    )
+with hc2:
+    holdout_slippage_bps = st.number_input(
+        "Holdout slippage per side, bps",
+        min_value=0.0,
+        max_value=20.0,
+        value=2.0,
+        step=0.5,
+        key="holdout_slippage_bps",
+    )
+
 holdout_signature = (
     int(holdout_horizon),
     int(rolling_lookback),
@@ -1613,8 +1633,8 @@ holdout_signature = (
     int(rolling_pool),
     int(rolling_top_n),
     float(rolling_min_turnover_m),
-    float(scalp_fee_bps),
-    float(scalp_slippage_bps),
+    float(holdout_fee_bps),
+    float(holdout_slippage_bps),
 )
 
 run_holdout = st.button(
@@ -1636,8 +1656,8 @@ if run_holdout:
                 pool_size=int(rolling_pool),
                 select_top_n=int(rolling_top_n),
                 min_daily_turnover_usd=float(rolling_min_turnover_m) * 1_000_000.0,
-                fee_bps=float(scalp_fee_bps),
-                slippage_bps=float(scalp_slippage_bps),
+                fee_bps=float(holdout_fee_bps),
+                slippage_bps=float(holdout_slippage_bps),
             )
             st.session_state["holdout_summary"] = holdout_summary
             st.session_state["holdout_events"] = holdout_events
