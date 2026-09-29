@@ -221,6 +221,7 @@ def run_research_pipeline(
     development_periods: int = 12,
     progress_callback: ProgressCallback | None = None,
     summary_callback: SummaryCallback | None = None,
+    run_fourth_holdout: bool = True,
 ) -> dict:
     total_steps = 8
     timings = {}
@@ -410,10 +411,18 @@ def run_research_pipeline(
         ]
         robust_close_location = not match.empty
 
-    if robust_close_location:
-        frozen_close_location_rule = freeze_close_location_rule(
-            development_details
-        )
+    frozen_close_location_rule = (
+        freeze_close_location_rule(development_details)
+        if robust_close_location
+        else None
+    )
+
+    close_location_holdout_summary = pd.DataFrame()
+    close_location_holdout_details = pd.DataFrame()
+    fourth_window_periods = pd.DataFrame()
+    fourth_window_universe_summary = {}
+
+    if run_fourth_holdout and robust_close_location:
         _notify(progress_callback, 8, total_steps, "Fourth Untouched Holdout")
         started = time.perf_counter()
         (
@@ -436,34 +445,51 @@ def run_research_pipeline(
             slippage_bps=float(slippage_bps),
         )
         timings["Fourth Untouched Holdout"] = time.perf_counter() - started
-    else:
-        frozen_close_location_rule = None
-        close_location_holdout_summary = pd.DataFrame()
-        close_location_holdout_details = pd.DataFrame()
-        fourth_window_periods = pd.DataFrame()
-        fourth_window_universe_summary = {}
+
+        summaries.append(
+            {
+                "Step": 8,
+                "Test": "Fourth Untouched Holdout",
+                "Status": close_location_holdout_status,
+                "What became clear": close_location_holdout_verdict,
+            }
+        )
+        _notify_summary(
+            summary_callback,
+            8,
+            total_steps,
+            "Fourth Untouched Holdout",
+            close_location_holdout_status,
+            close_location_holdout_verdict,
+        )
+    elif run_fourth_holdout:
         close_location_holdout_status = "SKIPPED"
         close_location_holdout_verdict = (
             "v2.8 did not confirm 5m close location as a robust development feature, "
             "so the fourth untouched window was not opened."
         )
-
-    summaries.append(
-        {
-            "Step": 8,
-            "Test": "Fourth Untouched Holdout",
-            "Status": close_location_holdout_status,
-            "What became clear": close_location_holdout_verdict,
-        }
-    )
-    _notify_summary(
-        summary_callback,
-        8,
-        total_steps,
-        "Fourth Untouched Holdout",
-        close_location_holdout_status,
-        close_location_holdout_verdict,
-    )
+        summaries.append(
+            {
+                "Step": 8,
+                "Test": "Fourth Untouched Holdout",
+                "Status": close_location_holdout_status,
+                "What became clear": close_location_holdout_verdict,
+            }
+        )
+        _notify_summary(
+            summary_callback,
+            8,
+            total_steps,
+            "Fourth Untouched Holdout",
+            close_location_holdout_status,
+            close_location_holdout_verdict,
+        )
+    else:
+        close_location_holdout_status = "PENDING"
+        close_location_holdout_verdict = (
+            "v2.8 checkpoint created. The fourth untouched holdout will run "
+            "in a fresh Streamlit phase to reduce memory pressure."
+        )
 
     summary_table = pd.DataFrame(summaries)
     timing_table = pd.DataFrame(
@@ -473,7 +499,12 @@ def run_research_pipeline(
         ]
     )
 
-    if close_location_holdout_status == "SURVIVED":
+    if close_location_holdout_status == "PENDING":
+        next_allowed_test = (
+            "Checkpoint ready. Run the frozen v2.9 fourth untouched holdout in a fresh phase "
+            "without recomputing steps 1-7."
+        )
+    elif close_location_holdout_status == "SURVIVED":
         next_allowed_test = (
             "The v2.9 low-close-location rule survived the fourth untouched historical window. "
             "Do not retune it. Next: forward paper validation on genuinely new incoming data with "
