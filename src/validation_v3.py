@@ -242,8 +242,8 @@ def _bootstrap_period_ci(
         return float("nan"), float("nan")
 
     return (
-        float(np.quantile(values, 0.025)),
-        float(np.quantile(values, 0.975)),
+        float(np.quantile(values, 0.005)),
+        float(np.quantile(values, 0.995)),
     )
 
 
@@ -275,94 +275,112 @@ def feature_stability_v3(
     *,
     outcome: str = "Gross 10m bps",
 ) -> tuple[pd.DataFrame, str]:
+    """Screen features separately for LONG and SHORT events.
+
+    Candidate status is deliberately strict:
+    - effect magnitude threshold
+    - 99% period-cluster bootstrap CI excludes zero
+    - quartile spread agrees with correlation direction
+    - consistency across individual periods
+    - leave-one-period-out stability
+    """
     rows = []
     available = [f for f in FEATURES_V3 if f in events.columns]
 
-    for feature in available:
-        work = events[["Period", "Symbol", feature, outcome]].copy()
-        work[feature] = pd.to_numeric(work[feature], errors="coerce")
-        work[outcome] = pd.to_numeric(work[outcome], errors="coerce")
-        work = work.dropna()
-
-        if len(work) < 60:
+    for side in ["LONG", "SHORT"]:
+        side_events = events[events["Side"].astype(str) == side].copy()
+        if side_events.empty:
             continue
 
-        overall = _spearman(work[feature], work[outcome], min_n=40)
-        if not np.isfinite(overall) or overall == 0:
-            continue
+        for feature in available:
+            work = side_events[["Period", "Symbol", feature, outcome]].copy()
+            work[feature] = pd.to_numeric(work[feature], errors="coerce")
+            work[outcome] = pd.to_numeric(work[outcome], errors="coerce")
+            work = work.dropna()
 
-        effect_sign = np.sign(overall)
-        spread = _quartile_spread(work, feature, outcome)
-        ci_low, ci_high = _bootstrap_period_ci(work, feature, outcome)
+            if len(work) < 60:
+                continue
 
-        periods = sorted(work["Period"].unique().tolist())
-        period_rhos = []
-        for period in periods:
-            part = work[work["Period"] == period]
-            rho = _spearman(part[feature], part[outcome], min_n=6)
-            if np.isfinite(rho) and rho != 0:
-                period_rhos.append(float(rho))
+            overall = _spearman(work[feature], work[outcome], min_n=40)
+            if not np.isfinite(overall) or overall == 0:
+                continue
 
-        same_periods = sum(
-            1 for rho in period_rhos if np.sign(rho) == effect_sign
-        )
+            effect_sign = np.sign(overall)
+            spread = _quartile_spread(work, feature, outcome)
+            ci_low, ci_high = _bootstrap_period_ci(work, feature, outcome)
 
-        loo_rhos = []
-        for period in periods:
-            part = work[work["Period"] != period]
-            rho = _spearman(part[feature], part[outcome], min_n=40)
-            if np.isfinite(rho) and rho != 0:
-                loo_rhos.append(float(rho))
+            periods = sorted(work["Period"].unique().tolist())
+            period_rhos = []
+            for period in periods:
+                part = work[work["Period"] == period]
+                rho = _spearman(part[feature], part[outcome], min_n=6)
+                if np.isfinite(rho) and rho != 0:
+                    period_rhos.append(float(rho))
 
-        same_loo = sum(
-            1 for rho in loo_rhos if np.sign(rho) == effect_sign
-        )
+            same_periods = sum(
+                1 for rho in period_rhos if np.sign(rho) == effect_sign
+            )
 
-        ci_excludes_zero = (
-            np.isfinite(ci_low)
-            and np.isfinite(ci_high)
-            and ((ci_low > 0 and effect_sign > 0) or (ci_high < 0 and effect_sign < 0))
-        )
-        spread_agrees = (
-            np.isfinite(spread)
-            and np.sign(spread) == effect_sign
-        )
-        period_fraction = (
-            same_periods / len(period_rhos)
-            if period_rhos
-            else 0.0
-        )
-        loo_fraction = same_loo / len(loo_rhos) if loo_rhos else 0.0
+            loo_rhos = []
+            for period in periods:
+                part = work[work["Period"] != period]
+                rho = _spearman(part[feature], part[outcome], min_n=40)
+                if np.isfinite(rho) and rho != 0:
+                    loo_rhos.append(float(rho))
 
-        candidate = (
-            abs(float(overall)) >= 0.12
-            and ci_excludes_zero
-            and spread_agrees
-            and abs(float(spread)) >= 12.0
-            and len(period_rhos) >= 6
-            and period_fraction >= 0.65
-            and len(loo_rhos) >= 6
-            and loo_fraction >= 0.80
-        )
+            same_loo = sum(
+                1 for rho in loo_rhos if np.sign(rho) == effect_sign
+            )
 
-        rows.append(
-            {
-                "Feature": feature,
-                "Events": int(len(work)),
-                "Overall Spearman": float(overall),
-                "Period-bootstrap CI low": ci_low,
-                "Period-bootstrap CI high": ci_high,
-                "10m Q4-Q1 spread bps": spread,
-                "Same-sign periods": f"{same_periods}/{len(period_rhos)}",
-                "Leave-one-period same sign": f"{same_loo}/{len(loo_rhos)}",
-                "Candidate feature": "YES" if candidate else "NO",
-            }
-        )
+            ci_excludes_zero = (
+                np.isfinite(ci_low)
+                and np.isfinite(ci_high)
+                and (
+                    (ci_low > 0 and effect_sign > 0)
+                    or (ci_high < 0 and effect_sign < 0)
+                )
+            )
+            spread_agrees = (
+                np.isfinite(spread)
+                and np.sign(spread) == effect_sign
+            )
+            period_fraction = (
+                same_periods / len(period_rhos)
+                if period_rhos
+                else 0.0
+            )
+            loo_fraction = same_loo / len(loo_rhos) if loo_rhos else 0.0
+
+            candidate = (
+                abs(float(overall)) >= 0.12
+                and ci_excludes_zero
+                and spread_agrees
+                and abs(float(spread)) >= 12.0
+                and len(period_rhos) >= 6
+                and period_fraction >= 0.65
+                and len(loo_rhos) >= 6
+                and loo_fraction >= 0.80
+            )
+
+            rows.append(
+                {
+                    "Side": side,
+                    "Feature": feature,
+                    "Events": int(len(work)),
+                    "Overall Spearman": float(overall),
+                    "99% period-bootstrap CI low": ci_low,
+                    "99% period-bootstrap CI high": ci_high,
+                    "10m Q4-Q1 spread bps": spread,
+                    "Same-sign periods": f"{same_periods}/{len(period_rhos)}",
+                    "Leave-one-period same sign": f"{same_loo}/{len(loo_rhos)}",
+                    "Candidate feature": "YES" if candidate else "NO",
+                }
+            )
 
     summary = pd.DataFrame(rows)
     if summary.empty:
         return summary, (
-            "No v3 feature had enough observations for the stricter period-cluster stability screen."
+            "No LONG or SHORT feature had enough observations for the stricter v3 period-cluster stability screen."
         )
 
     summary["_rank"] = (
@@ -379,23 +397,26 @@ def feature_stability_v3(
 
     if candidates.empty:
         verdict = (
-            "No feature passed the v3 period-cluster robustness screen. Do not create another "
-            "historical holdout rule yet."
+            "No LONG/SHORT feature passed the v3 period-cluster robustness screen with a 99% "
+            "bootstrap interval. Do not create another historical holdout rule yet."
         )
     else:
         descriptions = []
         for _, row in candidates.head(3).iterrows():
             descriptions.append(
-                f"{row['Feature']} (rho {float(row['Overall Spearman']):+.2f}, "
-                f"CI [{float(row['Period-bootstrap CI low']):+.2f}, "
-                f"{float(row['Period-bootstrap CI high']):+.2f}], "
+                f"{row['Side']} {row['Feature']} "
+                f"(rho {float(row['Overall Spearman']):+.2f}, "
+                f"99% CI [{float(row['99% period-bootstrap CI low']):+.2f}, "
+                f"{float(row['99% period-bootstrap CI high']):+.2f}], "
                 f"spread {float(row['10m Q4-Q1 spread bps']):+.1f} bps, "
                 f"periods {row['Same-sign periods']})"
             )
         verdict = (
-            "v3 found candidate features that survived the stricter period-cluster screen: "
+            "v3 found development candidates that survived the stricter side-specific "
+            "period-cluster screen: "
             + "; ".join(descriptions)
-            + ". Treat them as development candidates, not validated trading edges."
+            + ". They are candidates only, not validated trading edges."
         )
 
     return summary, verdict
+
