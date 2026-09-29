@@ -47,6 +47,18 @@ def _micro_diagnostics(one_minute: pd.DataFrame, confirm_i: int) -> dict:
         else float("nan")
     )
 
+    taker_ratio = float("nan")
+    if "taker_base" in one_minute.columns and float(row.get("volume", 0.0)) > 0:
+        taker_ratio = float(row.get("taker_base", float("nan"))) / float(row["volume"])
+
+    prior_taker_ratio = float("nan")
+    if "taker_base" in prior10.columns and not prior10.empty:
+        denom = pd.to_numeric(prior10["volume"], errors="coerce").replace(0.0, float("nan"))
+        prior_ratios = pd.to_numeric(prior10["taker_base"], errors="coerce") / denom
+        prior_ratios = prior_ratios.dropna()
+        if not prior_ratios.empty:
+            prior_taker_ratio = float(prior_ratios.mean())
+
     impulse_3m = float("nan")
     if confirm_i >= 3:
         base = float(one_minute.iloc[confirm_i - 3]["close"])
@@ -63,6 +75,12 @@ def _micro_diagnostics(one_minute: pd.DataFrame, confirm_i: int) -> dict:
         "1m close location": close_location,
         "1m impulse 3m bps": impulse_3m,
         "1m realized vol 5m bps": realized_vol,
+        "1m taker buy ratio": taker_ratio,
+        "1m taker buy ratio delta": (
+            taker_ratio - prior_taker_ratio
+            if pd.notna(taker_ratio) and pd.notna(prior_taker_ratio)
+            else float("nan")
+        ),
     }
 
 
@@ -82,6 +100,18 @@ def _five_minute_diagnostics(
     row = five_minute.iloc[loc]
     prior3 = five_minute.iloc[max(0, loc - 3):loc]
     prior3_vr = float(prior3["volume_ratio"].mean()) if not prior3.empty else float("nan")
+
+    taker_ratio_5m = float("nan")
+    if "taker_base" in five_minute.columns and float(row.get("volume", 0.0)) > 0:
+        taker_ratio_5m = float(row.get("taker_base", float("nan"))) / float(row["volume"])
+
+    prior_taker_ratio_5m = float("nan")
+    if "taker_base" in prior3.columns and not prior3.empty:
+        denom5 = pd.to_numeric(prior3["volume"], errors="coerce").replace(0.0, float("nan"))
+        prior5_ratios = pd.to_numeric(prior3["taker_base"], errors="coerce") / denom5
+        prior5_ratios = prior5_ratios.dropna()
+        if not prior5_ratios.empty:
+            prior_taker_ratio_5m = float(prior5_ratios.mean())
 
     candle_range = float(row["high"]) - float(row["low"])
     close_location = (
@@ -124,6 +154,12 @@ def _five_minute_diagnostics(
         ),
         "Relative extension / ATR": extension_atr,
         "Impulse age 5m bars": float(impulse_age),
+        "5m taker buy ratio": taker_ratio_5m,
+        "5m taker buy ratio delta": (
+            taker_ratio_5m - prior_taker_ratio_5m
+            if pd.notna(taker_ratio_5m) and pd.notna(prior_taker_ratio_5m)
+            else float("nan")
+        ),
     }
 
 
