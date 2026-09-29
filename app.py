@@ -20,17 +20,12 @@ from src.event_edge_study import run_event_edge_study
 from src.execution_reality import run_execution_reality_check
 from src.exit_surface import run_exit_surface
 from src.family_benchmark import benchmark_families
-from src.frozen_close_location_holdout import run_frozen_close_location_holdout
 from src.indicators import add_indicators
 from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
 from src.research_reset_v3 import run_research_reset_v3
-import importlib
-import src.research_pipeline as research_pipeline_module
-research_pipeline_module = importlib.reload(research_pipeline_module)
-run_research_pipeline = research_pipeline_module.run_research_pipeline
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 from src.scalping_edge_map import _fetch_1m_cached, run_scalping_edge_map
 from src.strategy import generate_signals
