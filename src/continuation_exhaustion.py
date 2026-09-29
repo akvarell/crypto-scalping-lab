@@ -158,11 +158,18 @@ def analyze_continuation_exhaustion(
         median_rho = float(valid["Spearman"].median())
         median_abs_rho = float(valid["Spearman"].abs().median())
 
+        sign_agrees = (
+            np.isfinite(median_rho)
+            and np.isfinite(spread10)
+            and np.sign(median_rho) == np.sign(spread10)
+            and np.sign(median_rho) != 0
+        )
         coherent = (
             dominant >= 3
             and median_abs_rho >= 0.10
             and np.isfinite(spread10)
             and abs(spread10) >= 8.0
+            and sign_agrees
         )
 
         summary_rows.append(
