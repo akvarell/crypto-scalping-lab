@@ -27,17 +27,19 @@ HORIZONS = [3, 5, 10, 15]
 def _cooldown(frame: pd.DataFrame, minutes: int = 30) -> pd.DataFrame:
     if frame.empty:
         return frame
-    kept = []
+
+    ordered = frame.sort_index().copy()
+    keep_positions = []
     last_by_family_direction: dict[tuple[str, int], pd.Timestamp] = {}
 
-    for ts, row in frame.sort_index().iterrows():
+    for pos, (ts, row) in enumerate(ordered.iterrows()):
         key = (str(row["Family"]), int(row["Direction"]))
         last = last_by_family_direction.get(key)
         if last is None or ts - last >= pd.Timedelta(minutes=minutes):
-            kept.append(ts)
+            keep_positions.append(pos)
             last_by_family_direction[key] = ts
 
-    return frame.loc[kept]
+    return ordered.iloc[keep_positions].copy()
 
 
 def _cross_section_rank(
@@ -284,10 +286,9 @@ def build_event_family_period_v31(
         if events.empty:
             continue
 
-        event_lookup = {
-            pd.Timestamp(ts): row
-            for ts, row in events.iterrows()
-        }
+        event_lookup: dict[pd.Timestamp, list[pd.Series]] = {}
+        for ts, row in events.iterrows():
+            event_lookup.setdefault(pd.Timestamp(ts), []).append(row)
 
         for batch in _merge_micro_windows(list(event_lookup)):
             try:
@@ -303,7 +304,6 @@ def build_event_family_period_v31(
                 continue
 
             for event_time in batch["events"]:
-                event = event_lookup[event_time]
                 known_time = pd.Timestamp(event_time) + pd.Timedelta(minutes=5)
                 micro_start = known_time - pd.Timedelta(minutes=30)
                 micro_end = known_time + pd.Timedelta(minutes=20)
@@ -336,47 +336,52 @@ def build_event_family_period_v31(
                     else float("nan")
                 )
 
-                record = {
-                    "Period": period,
-                    "Selection time": selection_time,
-                    "Symbol": symbol,
-                    "Family": str(event["Family"]),
-                    "Event time": event_time,
-                    "Known time": known_time,
-                    "Entry time": one_minute.index[entry_i],
-                    "Side": "LONG" if int(event["Direction"]) == 1 else "SHORT",
-                    "Direction": int(event["Direction"]),
-                    "5m close location": close_location,
-                }
+                for event in event_lookup[event_time]:
+                    record = {
+                        "Period": period,
+                        "Selection time": selection_time,
+                        "Symbol": symbol,
+                        "Family": str(event["Family"]),
+                        "Event time": event_time,
+                        "Known time": known_time,
+                        "Entry time": one_minute.index[entry_i],
+                        "Side": (
+                            "LONG"
+                            if int(event["Direction"]) == 1
+                            else "SHORT"
+                        ),
+                        "Direction": int(event["Direction"]),
+                        "5m close location": close_location,
+                    }
 
-                for col in [
-                    "Breadth",
-                    "Basket 15m return %",
-                    "Basket 60m return %",
-                    "Basket volume ratio",
-                    "5m volume ratio prior20",
-                    "5m trades ratio prior20",
-                    "5m range / ATR",
-                    "5m relative move / ATR",
-                    "5m ATR %",
-                    "5m RSI",
-                    "Cross-sectional 15m rank",
-                    "5m taker buy ratio",
-                    "5m taker buy ratio delta",
-                ]:
-                    record[col] = event.get(col, float("nan"))
+                    for col in [
+                        "Breadth",
+                        "Basket 15m return %",
+                        "Basket 60m return %",
+                        "Basket volume ratio",
+                        "5m volume ratio prior20",
+                        "5m trades ratio prior20",
+                        "5m range / ATR",
+                        "5m relative move / ATR",
+                        "5m ATR %",
+                        "5m RSI",
+                        "Cross-sectional 15m rank",
+                        "5m taker buy ratio",
+                        "5m taker buy ratio delta",
+                    ]:
+                        record[col] = event.get(col, float("nan"))
 
-                record.update(one_features)
+                    record.update(one_features)
 
-                for horizon in HORIZONS:
-                    record[f"Gross {horizon}m bps"] = _forward_return_bps(
-                        one_minute,
-                        entry_i,
-                        int(event["Direction"]),
-                        horizon,
-                    )
+                    for horizon in HORIZONS:
+                        record[f"Gross {horizon}m bps"] = _forward_return_bps(
+                            one_minute,
+                            entry_i,
+                            int(event["Direction"]),
+                            horizon,
+                        )
 
-                output_rows.append(record)
+                    output_rows.append(record)
 
     return pd.DataFrame(output_rows)
 
