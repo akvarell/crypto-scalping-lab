@@ -25,9 +25,10 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
-from src.cross_era_replication_v331 import (
-    analyze_cross_era_replication_v331,
-    build_relative_z_short_period_v331,
+from src.futures_positioning_v332 import (
+    analyze_futures_positioning_v332,
+    build_futures_positioning_period_v332,
+    clear_futures_v332_caches,
 )
 from src.research_universe_v3 import build_research_universe_v3
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
@@ -105,7 +106,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v3.3.1")
+st.title("Crypto Scalping Lab v3.3.2")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -551,41 +552,41 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Cross-Era Relative-z Replication · v3.3.1")
+st.subheader("Futures Positioning & Basis Lab · v3.3.2")
 st.caption(
-    "Replicate the exact v3.3 near-miss mechanism without relaxing its gate: positive relative-z "
-    "dislocation → SHORT reversion → fixed 15m horizon. Two older, already-inspected eras are used; "
-    "no new untouched window is consumed."
+    "Genuinely different development-only data source: Binance USD-M perpetual premium, funding "
+    "and futures-vs-spot basis. Hourly sampling is deterministic; no magnitude threshold is tuned. "
+    "Historical open-interest is intentionally excluded because comparable long history is unavailable."
 )
 
-run_v331 = st.button(
-    "Run v3.3.1 Cross-Era Replication",
+run_v332 = st.button(
+    "Run v3.3.2 Futures Positioning Lab",
     type="primary",
     use_container_width=True,
-    key="run_cross_era_v331",
+    key="run_futures_positioning_v332",
 )
 
-V331_PREFIX = "cross_era_v331"
+V332_PREFIX = "futures_positioning_v332"
 
-if run_v331:
+if run_v332:
     for key in [
-        f"{V331_PREFIX}_result",
-        f"{V331_PREFIX}_phase",
-        f"{V331_PREFIX}_universe",
-        f"{V331_PREFIX}_jobs",
-        f"{V331_PREFIX}_job_index",
-        f"{V331_PREFIX}_chunks",
-        f"{V331_PREFIX}_stage_rows",
+        f"{V332_PREFIX}_result",
+        f"{V332_PREFIX}_phase",
+        f"{V332_PREFIX}_universe",
+        f"{V332_PREFIX}_periods",
+        f"{V332_PREFIX}_period_index",
+        f"{V332_PREFIX}_chunks",
+        f"{V332_PREFIX}_stage_rows",
     ]:
         st.session_state.pop(key, None)
-    st.session_state[f"{V331_PREFIX}_phase"] = "universe"
+    st.session_state[f"{V332_PREFIX}_phase"] = "universe"
 
-v331_phase = st.session_state.get(f"{V331_PREFIX}_phase")
+v332_phase = st.session_state.get(f"{V332_PREFIX}_phase")
 
-if v331_phase == "universe":
-    progress_v331 = st.progress(0.0, text="1/3 · Building two inspected replication eras")
+if v332_phase == "universe":
+    progress_v332 = st.progress(0.0, text="1/3 · Building historical universe")
     try:
-        era_a_periods, era_a_universe, era_a_summary = build_research_universe_v3(
+        periods_v332, universe_v332, universe_summary_v332 = build_research_universe_v3(
             horizon_days=90,
             lookback_days=14,
             forward_days=7,
@@ -593,239 +594,224 @@ if v331_phase == "universe":
             trade_top_n=5,
             context_top_n=15,
             min_daily_turnover_usd=5_000_000.0,
-            end_offset_days=270,
-            as_of=RESEARCH_ANCHOR_UTC,
-        )
-        era_b_periods, era_b_universe, era_b_summary = build_research_universe_v3(
-            horizon_days=90,
-            lookback_days=14,
-            forward_days=7,
-            pool_size=20,
-            trade_top_n=5,
-            context_top_n=15,
-            min_daily_turnover_usd=5_000_000.0,
-            end_offset_days=390,
+            end_offset_days=0,
             as_of=RESEARCH_ANCHOR_UTC,
         )
 
-        era_a_universe = era_a_universe.copy()
-        era_b_universe = era_b_universe.copy()
-        era_a_universe["Era"] = "Era A"
-        era_b_universe["Era"] = "Era B"
-
-        combined_universe_v331 = pd.concat(
-            [era_a_universe, era_b_universe],
-            ignore_index=True,
+        period_ids_v332 = sorted(universe_v332["Period"].unique().tolist())
+        universe_status_v332 = (
+            "PASS_WITH_CAVEAT" if len(periods_v332) >= 8 else "REVIEW"
+        )
+        universe_message_v332 = (
+            f"Built {len(periods_v332)} development periods with top-5 trade symbols. "
+            f"Survivorship status remains {universe_summary_v332['survivorship_status']}. "
+            "Futures observations are used only where historical USD-M data exists."
         )
 
-        jobs_v331 = []
-        for era_name, frame in [
-            ("Era A", era_a_universe),
-            ("Era B", era_b_universe),
-        ]:
-            for period_id in sorted(frame["Period"].unique().tolist()):
-                jobs_v331.append(
-                    {
-                        "Era": era_name,
-                        "Period": int(period_id),
-                    }
-                )
-
-        universe_status_v331 = (
-            "PASS_WITH_CAVEAT"
-            if len(era_a_periods) >= 8 and len(era_b_periods) >= 8
-            else "REVIEW"
-        )
-        universe_message_v331 = (
-            f"Built {len(era_a_periods)} periods in Era A (ending 270d before anchor) and "
-            f"{len(era_b_periods)} periods in Era B (ending 390d before anchor). "
-            "Both eras were already inspected by earlier research and are replication data, not holdouts. "
-            f"Survivorship status remains {era_a_summary['survivorship_status']}."
-        )
-
-        st.session_state[f"{V331_PREFIX}_universe"] = combined_universe_v331
-        st.session_state[f"{V331_PREFIX}_jobs"] = jobs_v331
-        st.session_state[f"{V331_PREFIX}_job_index"] = 0
-        st.session_state[f"{V331_PREFIX}_chunks"] = []
-        st.session_state[f"{V331_PREFIX}_stage_rows"] = [
+        st.session_state[f"{V332_PREFIX}_universe"] = universe_v332
+        st.session_state[f"{V332_PREFIX}_periods"] = period_ids_v332
+        st.session_state[f"{V332_PREFIX}_period_index"] = 0
+        st.session_state[f"{V332_PREFIX}_chunks"] = []
+        st.session_state[f"{V332_PREFIX}_stage_rows"] = [
             {
                 "Step": 1,
-                "Test": "Replication Eras",
-                "Status": universe_status_v331,
-                "What became clear": universe_message_v331,
+                "Test": "Historical Universe",
+                "Status": universe_status_v332,
+                "What became clear": universe_message_v332,
             }
         ]
-        st.session_state[f"{V331_PREFIX}_phase"] = "replication"
+        st.session_state[f"{V332_PREFIX}_phase"] = "observations"
         gc.collect()
         st.rerun()
     except Exception as exc:
-        st.session_state[f"{V331_PREFIX}_phase"] = None
-        st.error(f"v3.3.1 replication universe build failed: {exc}")
+        st.session_state[f"{V332_PREFIX}_phase"] = None
+        st.error(f"v3.3.2 universe build failed: {exc}")
 
-elif v331_phase == "replication":
-    universe_v331 = st.session_state.get(f"{V331_PREFIX}_universe")
-    jobs_v331 = st.session_state.get(f"{V331_PREFIX}_jobs", [])
-    job_index_v331 = int(
-        st.session_state.get(f"{V331_PREFIX}_job_index", 0)
+elif v332_phase == "observations":
+    universe_v332 = st.session_state.get(f"{V332_PREFIX}_universe")
+    period_ids_v332 = st.session_state.get(f"{V332_PREFIX}_periods", [])
+    period_index_v332 = int(
+        st.session_state.get(f"{V332_PREFIX}_period_index", 0)
     )
-    chunks_v331 = st.session_state.get(f"{V331_PREFIX}_chunks", [])
+    chunks_v332 = st.session_state.get(f"{V332_PREFIX}_chunks", [])
 
-    if universe_v331 is None or not jobs_v331:
-        st.session_state[f"{V331_PREFIX}_phase"] = None
-        st.error("v3.3.1 checkpoint is missing. Run the replication again.")
-    elif job_index_v331 < len(jobs_v331):
-        job_v331 = jobs_v331[job_index_v331]
-        era_v331 = str(job_v331["Era"])
-        period_v331 = int(job_v331["Period"])
-
-        progress_v331 = st.progress(
-            0.33 + 0.34 * (job_index_v331 / len(jobs_v331)),
+    if universe_v332 is None or not period_ids_v332:
+        st.session_state[f"{V332_PREFIX}_phase"] = None
+        st.error("v3.3.2 checkpoint is missing. Run the lab again.")
+    elif period_index_v332 < len(period_ids_v332):
+        current_period_v332 = period_ids_v332[period_index_v332]
+        progress_v332 = st.progress(
+            0.33 + 0.34 * (period_index_v332 / len(period_ids_v332)),
             text=(
-                f"2/3 · Replication observations · {era_v331} · "
-                f"period {job_index_v331 + 1}/{len(jobs_v331)}"
+                f"2/3 · Futures positioning observations · period "
+                f"{period_index_v332 + 1}/{len(period_ids_v332)}"
             ),
         )
 
         try:
-            period_frame_v331 = universe_v331[
-                (universe_v331["Era"].astype(str) == era_v331)
-                & (universe_v331["Period"].astype(int) == period_v331)
+            period_frame_v332 = universe_v332[
+                universe_v332["Period"] == current_period_v332
             ].copy()
 
-            chunk_v331 = build_relative_z_short_period_v331(
-                period_frame_v331,
+            chunk_v332 = build_futures_positioning_period_v332(
+                period_frame_v332,
                 forward_days=7,
                 warmup_hours=48,
                 sample_minutes=60,
             )
 
-            if chunk_v331 is not None and not chunk_v331.empty:
-                chunk_v331 = chunk_v331[
-                    [
-                        "Period",
-                        "Symbol",
-                        "Strength",
-                        "Gross 15m bps",
-                    ]
-                ].copy()
-                chunk_v331["Era"] = era_v331
-                chunks_v331.append(chunk_v331)
+            if chunk_v332 is not None and not chunk_v332.empty:
+                compact_cols_v332 = [
+                    "Period",
+                    "Symbol",
+                    "Category",
+                    "Feature",
+                    "Side",
+                    "Strength",
+                    "Gross 3m bps",
+                    "Gross 5m bps",
+                    "Gross 10m bps",
+                    "Gross 15m bps",
+                    "Gross 30m bps",
+                ]
+                chunks_v332.append(chunk_v332[compact_cols_v332].copy())
 
-            st.session_state[f"{V331_PREFIX}_chunks"] = chunks_v331
-            st.session_state[f"{V331_PREFIX}_job_index"] = (
-                job_index_v331 + 1
+            st.session_state[f"{V332_PREFIX}_chunks"] = chunks_v332
+            st.session_state[f"{V332_PREFIX}_period_index"] = (
+                period_index_v332 + 1
             )
 
+            clear_futures_v332_caches()
             _fetch_1m_cached.cache_clear()
             gc.collect()
             st.rerun()
         except Exception as exc:
+            clear_futures_v332_caches()
             _fetch_1m_cached.cache_clear()
             gc.collect()
             st.error(
-                f"v3.3.1 replication failed on {era_v331}, period "
-                f"{period_v331}: {exc}"
+                f"v3.3.2 futures observation build failed on period "
+                f"{period_index_v332 + 1}/{len(period_ids_v332)}: {exc}"
             )
     else:
-        observations_v331 = (
-            pd.concat(chunks_v331, ignore_index=True)
-            if chunks_v331
+        observations_v332 = (
+            pd.concat(chunks_v332, ignore_index=True)
+            if chunks_v332
             else pd.DataFrame()
         )
 
-        if observations_v331.empty:
-            st.session_state[f"{V331_PREFIX}_phase"] = None
-            st.error("v3.3.1 produced no replication observations.")
+        if observations_v332.empty:
+            st.session_state[f"{V332_PREFIX}_phase"] = None
+            st.error("v3.3.2 produced no futures-positioning observations.")
         else:
-            rows_v331 = list(
-                st.session_state.get(f"{V331_PREFIX}_stage_rows", [])
+            rows_v332 = list(
+                st.session_state.get(f"{V332_PREFIX}_stage_rows", [])
             )
 
-            era_counts_v331 = (
-                observations_v331.groupby("Era")
+            category_counts_v332 = (
+                observations_v332.groupby("Category")
                 .size()
+                .sort_values(ascending=False)
                 .to_dict()
             )
-            rows_v331.append(
+            count_text_v332 = ", ".join(
+                f"{name}: {count}"
+                for name, count in category_counts_v332.items()
+            )
+
+            rows_v332.append(
                 {
                     "Step": 2,
-                    "Test": "Frozen Mechanism Dataset",
+                    "Test": "Futures Positioning Dataset",
                     "Status": "PASS",
                     "What became clear": (
-                        f"Built {len(observations_v331)} frozen-mechanism observations. "
-                        f"Era A: {era_counts_v331.get('Era A', 0)}, "
-                        f"Era B: {era_counts_v331.get('Era B', 0)}. "
-                        "Mechanism, side, 15m horizon and hourly sampling were not changed."
+                        f"Built {len(observations_v332)} futures-positioning observations across "
+                        f"{observations_v332['Period'].nunique()} periods and "
+                        f"{observations_v332['Symbol'].nunique()} symbols. "
+                        f"Category observations — {count_text_v332}. "
+                        "Funding records are last-known only; premium/basis use completed 5m bars."
                     ),
                 }
             )
 
-            progress_v331 = st.progress(
+            progress_v332 = st.progress(
                 0.67,
-                text="3/3 · Cross-era replication analysis",
+                text="3/3 · Futures relationship robustness screen",
             )
 
-            replication_table_v331, status_v331, verdict_v331 = (
-                analyze_cross_era_replication_v331(observations_v331)
+            surface_v332, candidates_v332, verdict_v332 = (
+                analyze_futures_positioning_v332(observations_v332)
             )
 
-            rows_v331.append(
+            candidate_count_v332 = (
+                int(len(candidates_v332))
+                if candidates_v332 is not None
+                else 0
+            )
+            status_v332 = (
+                "FUTURES_MECHANISM_FOUND"
+                if candidate_count_v332 > 0
+                else "NO_FUTURES_MECHANISM"
+            )
+
+            rows_v332.append(
                 {
                     "Step": 3,
-                    "Test": "Cross-Era Replication",
-                    "Status": status_v331,
-                    "What became clear": verdict_v331,
+                    "Test": "Futures Positioning Screen",
+                    "Status": status_v332,
+                    "What became clear": verdict_v332,
                 }
             )
 
-            if status_v331 == "REPLICATED":
-                next_v331 = (
-                    "The mechanism replicated on both older inspected eras. This is still not "
-                    "strategy validation. Next build v3.4 Purged Walk-Forward across inspected data: "
-                    "learn any relative-z threshold only inside each past training block, purge the "
-                    "boundary, and evaluate the next chronological block with 12/20/30 bps costs "
-                    "and portfolio concurrency limits."
+            if status_v332 == "FUTURES_MECHANISM_FOUND":
+                next_v332 = (
+                    "Next build v3.4 Purged Walk-Forward for the surviving futures mechanism only. "
+                    "Any threshold must be learned inside each past training fold, with a purge before "
+                    "the next chronological evaluation block. Include 12/20/30 bps cost stress and "
+                    "portfolio concurrency limits."
                 )
             else:
-                next_v331 = (
-                    "The near-miss mechanism did not replicate cleanly. Do not change its side, "
-                    "15m horizon or threshold definition to rescue it. Return to genuinely different "
-                    "data-source/mechanism research rather than purged walk-forward."
+                next_v332 = (
+                    "NO_EDGE_FOUND for the tested research space. Spot trend/breakout, failed breakout, "
+                    "pullback/reclaim, cross-sectional, order-flow, breadth, dislocation, microstructure "
+                    "reversal and futures positioning/basis have not produced a stable candidate. "
+                    "Stop systematic parameter search rather than data-mine another variant."
                 )
 
-            st.session_state[f"{V331_PREFIX}_result"] = {
-                "stage_summaries": pd.DataFrame(rows_v331),
-                "next_step": next_v331,
+            st.session_state[f"{V332_PREFIX}_result"] = {
+                "stage_summaries": pd.DataFrame(rows_v332),
+                "next_step": next_v332,
             }
-            st.session_state[f"{V331_PREFIX}_phase"] = "done"
+            st.session_state[f"{V332_PREFIX}_phase"] = "done"
 
             for key in [
-                f"{V331_PREFIX}_universe",
-                f"{V331_PREFIX}_jobs",
-                f"{V331_PREFIX}_job_index",
-                f"{V331_PREFIX}_chunks",
-                f"{V331_PREFIX}_stage_rows",
+                f"{V332_PREFIX}_universe",
+                f"{V332_PREFIX}_periods",
+                f"{V332_PREFIX}_period_index",
+                f"{V332_PREFIX}_chunks",
+                f"{V332_PREFIX}_stage_rows",
             ]:
                 st.session_state.pop(key, None)
 
-            del observations_v331, chunks_v331, universe_v331, replication_table_v331
+            del observations_v332, chunks_v332, universe_v332, surface_v332, candidates_v332
+            clear_futures_v332_caches()
             _fetch_1m_cached.cache_clear()
             gc.collect()
-            progress_v331.progress(1.0, text="v3.3.1 cross-era replication complete")
+            progress_v332.progress(1.0, text="v3.3.2 futures positioning lab complete")
             st.rerun()
 
-v331_result = st.session_state.get(f"{V331_PREFIX}_result")
+v332_result = st.session_state.get(f"{V332_PREFIX}_result")
 
-if v331_result is not None:
-    st.success("v3.3.1 cross-era replication complete")
+if v332_result is not None:
+    st.success("v3.3.2 futures positioning lab complete")
     st.markdown("**Короткий висновок**")
-    for _, row in v331_result["stage_summaries"].iterrows():
+    for _, row in v332_result["stage_summaries"].iterrows():
         st.write(
             f"{row['Test']} · {row['Status']}: {row['What became clear']}"
         )
 
     st.markdown("**Далі**")
-    st.write(str(v331_result.get("next_step", "")))
+    st.write(str(v332_result.get("next_step", "")))
 
 st.subheader("Rolling Universe Validation · v1.1")
 st.caption(
