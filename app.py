@@ -23,6 +23,7 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
+from src.research_pipeline import run_research_pipeline
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 from src.scalping_edge_map import run_scalping_edge_map
 from src.strategy import generate_signals
@@ -98,7 +99,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.4.2")
+st.title("Crypto Scalping Lab v2.5")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -542,6 +543,132 @@ if universe_df is not None:
             "Research score = 30% liquidity + 35% realized volatility + 25% ATR rank + 10% activity. "
             "BTC correlation is intentionally separate. For a historical strategy test, the universe "
             "must be re-selected at each past date using only information available before that date."
+        )
+
+st.subheader("Automated Research Pipeline · v2.5")
+st.caption(
+    "One button runs the current research protocol in the correct order: "
+    "Rolling Universe → frozen-format development entry study → frozen 1m holdout → regime/feature drift. "
+    "After every completed step the app writes a short plain-text conclusion. "
+    "The pipeline stops after diagnostics instead of automatically tuning on the inspected holdout."
+)
+
+rp1, rp2, rp3, rp4 = st.columns(4)
+rp1.metric("Development window", "90 days")
+rp2.metric("Frozen holdout", "120 days")
+rp3.metric("Costs", "4 + 2 bps / side")
+rp4.metric("Research anchor", "2026-09-29 UTC")
+
+run_pipeline = st.button(
+    "Run Research Pipeline",
+    type="primary",
+    use_container_width=True,
+    key="run_research_pipeline_v25",
+)
+
+if run_pipeline:
+    pipeline_progress = st.progress(0.0, text="Preparing research pipeline...")
+    live_summary_box = st.container()
+
+    def _pipeline_progress(step: int, total: int, label: str) -> None:
+        completed_before = max(0.0, min(1.0, (step - 1) / total))
+        pipeline_progress.progress(
+            completed_before,
+            text=f"Step {step}/{total}: {label}...",
+        )
+
+    def _pipeline_summary(
+        step: int,
+        total: int,
+        label: str,
+        status: str,
+        message: str,
+    ) -> None:
+        pipeline_progress.progress(
+            max(0.0, min(1.0, step / total)),
+            text=f"Step {step}/{total}: {label} complete",
+        )
+        with live_summary_box:
+            st.markdown(f"**Step {step}/{total} · {label} · {status}**")
+            st.write(message)
+
+    try:
+        pipeline_result = run_research_pipeline(
+            horizon_days=90,
+            lookback_days=14,
+            forward_days=7,
+            pool_size=20,
+            select_top_n=5,
+            min_daily_turnover_usd=5_000_000.0,
+            fee_bps=4.0,
+            slippage_bps=2.0,
+            holdout_days=120,
+            holdout_end_offset_days=270,
+            development_periods=12,
+            progress_callback=_pipeline_progress,
+            summary_callback=_pipeline_summary,
+        )
+        st.session_state["research_pipeline_result"] = pipeline_result
+        pipeline_progress.progress(1.0, text="Research pipeline complete")
+    except Exception as exc:
+        st.error(f"Research Pipeline failed: {exc}")
+
+pipeline_result = st.session_state.get("research_pipeline_result")
+
+if pipeline_result is not None:
+    st.markdown("### Research Pipeline summary")
+    st.caption(
+        f"Frozen research anchor: {pipeline_result.get('research_anchor', '')}. "
+        "These summaries are generated from the completed tests, not from an optimizer."
+    )
+
+    stage_summaries = pipeline_result.get("stage_summaries")
+    if stage_summaries is not None and not stage_summaries.empty:
+        for _, row in stage_summaries.iterrows():
+            st.markdown(
+                f"**{int(row['Step'])}. {row['Test']} · {row['Status']}**"
+            )
+            st.write(str(row["What became clear"]))
+
+    timings = pipeline_result.get("timings")
+    if timings is not None and not timings.empty:
+        shown_timings = timings.copy()
+        shown_timings["Seconds"] = shown_timings["Seconds"].round(1)
+        shown_timings["Minutes"] = shown_timings["Minutes"].round(2)
+        with st.expander("Execution time by test"):
+            st.dataframe(
+                shown_timings,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.markdown("**What happens next**")
+    st.write(str(pipeline_result.get("next_allowed_test", "")))
+
+    with st.expander("Pipeline result tables"):
+        st.markdown("**Development entry study**")
+        st.dataframe(
+            pipeline_result["development_summary"].round(2),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.markdown("**Frozen 1m holdout**")
+        st.dataframe(
+            pipeline_result["holdout_summary"].round(2),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.markdown("**Feature drift**")
+        st.dataframe(
+            pipeline_result["feature_drift"].round(2),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.markdown("**Feature → return relationship**")
+        st.dataframe(
+            pipeline_result["feature_corr"].round(2),
+            use_container_width=True,
+            hide_index=True,
         )
 
 st.subheader("Rolling Universe Validation · v1.1")
