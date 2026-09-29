@@ -26,6 +26,7 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
+from src.research_reset_v3 import run_research_reset_v3
 import importlib
 import src.research_pipeline as research_pipeline_module
 research_pipeline_module = importlib.reload(research_pipeline_module)
@@ -105,7 +106,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.9.1")
+st.title("Crypto Scalping Lab v3.0")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -551,194 +552,82 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Research Pipeline · v2.9.1")
-st.caption("One button runs the 8-step research chain in two memory-safe phases.")
-
-run_pipeline = st.button(
-    "Run Research Pipeline",
-    type="primary",
-    use_container_width=True,
-    key="run_research_pipeline_v291",
+st.subheader("Research Reset · v3.0")
+st.caption(
+    "Clean causal research pipeline: historical trade/context universe → 48h-warmup events → "
+    "timing audit → 12/20/30 bps cost stress → side-specific period-cluster feature stability. "
+    "No new historical holdout is opened."
 )
 
-if run_pipeline:
-    st.session_state.pop("research_pipeline_result_v291", None)
-    st.session_state.pop("research_pipeline_checkpoint_v291", None)
-    st.session_state["research_pipeline_phase_v291"] = "phase1"
+run_v3 = st.button(
+    "Run v3 Research Audit",
+    type="primary",
+    use_container_width=True,
+    key="run_research_reset_v30",
+)
 
-pipeline_phase = st.session_state.get("research_pipeline_phase_v291")
+if run_v3:
+    st.session_state.pop("research_reset_v30", None)
+    progress_v3 = st.progress(0.0, text="Preparing v3 audit...")
+    live_v3 = st.empty()
 
-if pipeline_phase == "phase1":
-    pipeline_progress = st.progress(0.0, text="Preparing steps 1–7...")
-    latest_summary = st.empty()
-
-    def _pipeline_progress(step: int, total: int, label: str) -> None:
-        pipeline_progress.progress(
-            max(0.0, min(0.875, (step - 1) / total)),
-            text=f"{step}/8 · {label}",
+    def _v3_progress(step: int, total: int, label: str) -> None:
+        progress_v3.progress(
+            max(0.0, min(1.0, (step - 1) / total)),
+            text=f"{step}/{total} · {label}",
         )
 
-    def _pipeline_summary(
+    def _v3_summary(
         step: int,
         total: int,
         label: str,
         status: str,
         message: str,
     ) -> None:
-        pipeline_progress.progress(
-            max(0.0, min(0.875, step / 8)),
-            text=f"{step}/8 · {label} complete",
+        progress_v3.progress(
+            max(0.0, min(1.0, step / total)),
+            text=f"{step}/{total} · {label} complete",
         )
-        latest_summary.info(f"{label} · {status}\n\n{message}")
+        live_v3.info(f"{label} · {status}\n\n{message}")
 
     try:
-        phase1_result = run_research_pipeline(
+        v3_result = run_research_reset_v3(
             horizon_days=90,
             lookback_days=14,
             forward_days=7,
             pool_size=20,
-            select_top_n=5,
+            trade_top_n=5,
+            context_top_n=15,
             min_daily_turnover_usd=5_000_000.0,
-            fee_bps=4.0,
-            slippage_bps=2.0,
-            holdout_days=120,
-            holdout_end_offset_days=270,
-            development_periods=12,
-            progress_callback=_pipeline_progress,
-            summary_callback=_pipeline_summary,
-            run_fourth_holdout=False,
+            progress_callback=_v3_progress,
+            summary_callback=_v3_summary,
         )
 
-        phase1_rows = phase1_result["stage_summaries"].to_dict("records")
-        frozen_rule = phase1_result.get("frozen_close_location_rule")
-        robustness_status = phase1_result.get("robustness_status")
+        st.session_state["research_reset_v30"] = {
+            "stage_summaries": v3_result["stage_summaries"],
+            "next_step": v3_result["next_step"],
+        }
 
-        if frozen_rule is not None and robustness_status == "ROBUST_FEATURE_FOUND":
-            st.session_state["research_pipeline_checkpoint_v291"] = {
-                "stage_rows": phase1_rows,
-                "rule": frozen_rule,
-            }
-            st.session_state["research_pipeline_phase_v291"] = "phase2"
-
-            # Release the heavy 1m cache and phase-1 data before opening
-            # the fourth untouched window.
-            del phase1_result
-            _fetch_1m_cached.cache_clear()
-            gc.collect()
-            st.rerun()
-        else:
-            st.session_state["research_pipeline_result_v291"] = {
-                "stage_summaries": pd.DataFrame(phase1_rows),
-                "next_allowed_test": (
-                    "v2.8 did not justify opening the fourth untouched window. "
-                    "Continue development-only research."
-                ),
-            }
-            st.session_state["research_pipeline_phase_v291"] = "done"
-            _fetch_1m_cached.cache_clear()
-            gc.collect()
-            st.rerun()
+        del v3_result
+        _fetch_1m_cached.cache_clear()
+        gc.collect()
+        progress_v3.progress(1.0, text="v3 research audit complete")
     except Exception as exc:
-        st.session_state["research_pipeline_phase_v291"] = None
-        st.error(f"Research Pipeline failed before step 8: {exc}")
+        _fetch_1m_cached.cache_clear()
+        gc.collect()
+        st.error(f"v3 Research Audit failed: {exc}")
 
-elif pipeline_phase == "phase2":
-    checkpoint = st.session_state.get("research_pipeline_checkpoint_v291")
-    if checkpoint is None:
-        st.session_state["research_pipeline_phase_v291"] = None
-        st.error("Pipeline checkpoint is missing. Run the pipeline again.")
-    else:
-        pipeline_progress = st.progress(0.875, text="8/8 · Fourth Untouched Holdout")
-        latest_summary = st.empty()
+v3_result = st.session_state.get("research_reset_v30")
 
-        try:
-            (
-                holdout_summary_v29,
-                holdout_details_v29,
-                fourth_periods_v29,
-                fourth_universe_v29,
-                status_v29,
-                verdict_v29,
-            ) = run_frozen_close_location_holdout(
-                rule=checkpoint["rule"],
-                horizon_days=120,
-                end_offset_days=510,
-                lookback_days=14,
-                forward_days=7,
-                pool_size=20,
-                select_top_n=5,
-                min_daily_turnover_usd=5_000_000.0,
-                fee_bps=4.0,
-                slippage_bps=2.0,
-            )
-
-            pipeline_progress.progress(
-                1.0,
-                text="8/8 · Fourth Untouched Holdout complete",
-            )
-            latest_summary.info(
-                f"Fourth Untouched Holdout · {status_v29}\n\n{verdict_v29}"
-            )
-
-            final_rows = list(checkpoint["stage_rows"])
-            final_rows.append(
-                {
-                    "Step": 8,
-                    "Test": "Fourth Untouched Holdout",
-                    "Status": status_v29,
-                    "What became clear": verdict_v29,
-                }
-            )
-
-            if status_v29 == "SURVIVED":
-                next_text = (
-                    "v2.9 survived the fourth untouched historical window. Do not retune it. "
-                    "Next: forward paper validation on genuinely new incoming data."
-                )
-            elif status_v29 == "LOW_SAMPLE":
-                next_text = (
-                    "Keep the exact v2.9 rule frozen and extend only with additional untouched time. "
-                    "Do not loosen the threshold."
-                )
-            elif status_v29 == "MIXED":
-                next_text = (
-                    "v2.9 is not validated. Do not retune it on the fourth window; return to "
-                    "development-only hypothesis work."
-                )
-            else:
-                next_text = (
-                    "The frozen v2.9 rule failed. Reject this exact rule without retuning it on "
-                    "the fourth window; preserve the universe screener."
-                )
-
-            st.session_state["research_pipeline_result_v291"] = {
-                "stage_summaries": pd.DataFrame(final_rows),
-                "next_allowed_test": next_text,
-            }
-            st.session_state["research_pipeline_phase_v291"] = "done"
-            st.session_state.pop("research_pipeline_checkpoint_v291", None)
-
-            del holdout_summary_v29, holdout_details_v29, fourth_periods_v29
-            _fetch_1m_cached.cache_clear()
-            gc.collect()
-            st.rerun()
-        except Exception as exc:
-            st.error(f"Step 8 failed: {exc}")
-
-pipeline_result = st.session_state.get("research_pipeline_result_v291")
-
-if pipeline_result is not None:
-    st.success("Research pipeline complete")
-    stage_summaries = pipeline_result.get("stage_summaries")
-    if stage_summaries is not None and not stage_summaries.empty:
-        st.markdown("**Короткий висновок**")
-        for _, row in stage_summaries.iterrows():
-            st.write(
-                f"{row['Test']} · {row['Status']}: {row['What became clear']}"
-            )
+if v3_result is not None:
+    st.markdown("**Короткий висновок**")
+    for _, row in v3_result["stage_summaries"].iterrows():
+        st.write(
+            f"{row['Test']} · {row['Status']}: {row['What became clear']}"
+        )
 
     st.markdown("**Далі**")
-    st.write(str(pipeline_result.get("next_allowed_test", "")))
+    st.write(str(v3_result.get("next_step", "")))
 
 st.subheader("Rolling Universe Validation · v1.1")
 st.caption(
