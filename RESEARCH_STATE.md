@@ -96,5 +96,5 @@ Do NOT open another historical holdout in v3.3.
 ## Target next validation
 Only a robust new candidate may advance to v3.4 Purged Walk-Forward.
 
-## Latest repository commit
+## Latest research code commit
 17c9ff15c7af7bac0ddd19b646025fee9c21c3b5
