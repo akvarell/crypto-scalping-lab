@@ -25,9 +25,9 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
-from src.execution_horizon_v32 import (
-    benchmark_execution_horizon_v32,
-    build_execution_horizon_period_v32,
+from src.microstructure_context_v33 import (
+    analyze_microstructure_context_v33,
+    build_microstructure_context_period_v33,
 )
 from src.research_universe_v3 import build_research_universe_v3
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
@@ -105,7 +105,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v3.2")
+st.title("Crypto Scalping Lab v3.3")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -551,40 +551,41 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Execution & Horizon Map · v3.2")
+st.subheader("Microstructure & Context Event Lab · v3.3")
 st.caption(
-    "Same four event families, two execution timings and six holding horizons. "
-    "Step 2 is checkpointed period-by-period. No event thresholds are tuned."
+    "Development-only discovery on four new mechanism families: order flow, breadth participation, "
+    "cross-sectional dislocation and microstructure reversal. Hourly sampling avoids threshold-based "
+    "event selection; Step 2 is checkpointed period-by-period. No new holdout is opened."
 )
 
-run_v32 = st.button(
-    "Run v3.2 Execution & Horizon Map",
+run_v33 = st.button(
+    "Run v3.3 Microstructure & Context Lab",
     type="primary",
     use_container_width=True,
-    key="run_execution_horizon_v32",
+    key="run_microstructure_context_v33",
 )
 
-V32_PREFIX = "execution_horizon_v32"
+V33_PREFIX = "microstructure_context_v33"
 
-if run_v32:
+if run_v33:
     for key in [
-        f"{V32_PREFIX}_result",
-        f"{V32_PREFIX}_phase",
-        f"{V32_PREFIX}_universe",
-        f"{V32_PREFIX}_periods",
-        f"{V32_PREFIX}_period_index",
-        f"{V32_PREFIX}_chunks",
-        f"{V32_PREFIX}_stage_rows",
+        f"{V33_PREFIX}_result",
+        f"{V33_PREFIX}_phase",
+        f"{V33_PREFIX}_universe",
+        f"{V33_PREFIX}_periods",
+        f"{V33_PREFIX}_period_index",
+        f"{V33_PREFIX}_chunks",
+        f"{V33_PREFIX}_stage_rows",
     ]:
         st.session_state.pop(key, None)
-    st.session_state[f"{V32_PREFIX}_phase"] = "universe"
+    st.session_state[f"{V33_PREFIX}_phase"] = "universe"
 
-v32_phase = st.session_state.get(f"{V32_PREFIX}_phase")
+v33_phase = st.session_state.get(f"{V33_PREFIX}_phase")
 
-if v32_phase == "universe":
-    progress_v32 = st.progress(0.0, text="1/3 · Building historical universe")
+if v33_phase == "universe":
+    progress_v33 = st.progress(0.0, text="1/3 · Building historical universe")
     try:
-        periods_v32, universe_v32, universe_summary_v32 = build_research_universe_v3(
+        periods_v33, universe_v33, universe_summary_v33 = build_research_universe_v3(
             horizon_days=90,
             lookback_days=14,
             forward_days=7,
@@ -596,85 +597,86 @@ if v32_phase == "universe":
             as_of=RESEARCH_ANCHOR_UTC,
         )
 
-        period_ids_v32 = sorted(universe_v32["Period"].unique().tolist())
-        universe_status_v32 = (
-            "PASS_WITH_CAVEAT" if len(periods_v32) >= 8 else "REVIEW"
+        period_ids_v33 = sorted(universe_v33["Period"].unique().tolist())
+        universe_status_v33 = (
+            "PASS_WITH_CAVEAT" if len(periods_v33) >= 8 else "REVIEW"
         )
-        universe_message_v32 = (
-            f"Built {len(periods_v32)} periods with top-5 trade symbols and top-15 context symbols. "
-            f"Survivorship status remains {universe_summary_v32['survivorship_status']}."
+        universe_message_v33 = (
+            f"Built {len(periods_v33)} periods with top-5 trade symbols and top-15 context symbols. "
+            f"Survivorship status remains {universe_summary_v33['survivorship_status']}."
         )
 
-        st.session_state[f"{V32_PREFIX}_universe"] = universe_v32
-        st.session_state[f"{V32_PREFIX}_periods"] = period_ids_v32
-        st.session_state[f"{V32_PREFIX}_period_index"] = 0
-        st.session_state[f"{V32_PREFIX}_chunks"] = []
-        st.session_state[f"{V32_PREFIX}_stage_rows"] = [
+        st.session_state[f"{V33_PREFIX}_universe"] = universe_v33
+        st.session_state[f"{V33_PREFIX}_periods"] = period_ids_v33
+        st.session_state[f"{V33_PREFIX}_period_index"] = 0
+        st.session_state[f"{V33_PREFIX}_chunks"] = []
+        st.session_state[f"{V33_PREFIX}_stage_rows"] = [
             {
                 "Step": 1,
                 "Test": "Historical Universe",
-                "Status": universe_status_v32,
-                "What became clear": universe_message_v32,
+                "Status": universe_status_v33,
+                "What became clear": universe_message_v33,
             }
         ]
-        st.session_state[f"{V32_PREFIX}_phase"] = "events"
+        st.session_state[f"{V33_PREFIX}_phase"] = "observations"
         gc.collect()
         st.rerun()
     except Exception as exc:
-        st.session_state[f"{V32_PREFIX}_phase"] = None
-        st.error(f"v3.2 universe build failed: {exc}")
+        st.session_state[f"{V33_PREFIX}_phase"] = None
+        st.error(f"v3.3 universe build failed: {exc}")
 
-elif v32_phase == "events":
-    universe_v32 = st.session_state.get(f"{V32_PREFIX}_universe")
-    period_ids_v32 = st.session_state.get(f"{V32_PREFIX}_periods", [])
-    period_index_v32 = int(
-        st.session_state.get(f"{V32_PREFIX}_period_index", 0)
+elif v33_phase == "observations":
+    universe_v33 = st.session_state.get(f"{V33_PREFIX}_universe")
+    period_ids_v33 = st.session_state.get(f"{V33_PREFIX}_periods", [])
+    period_index_v33 = int(
+        st.session_state.get(f"{V33_PREFIX}_period_index", 0)
     )
-    chunks_v32 = st.session_state.get(f"{V32_PREFIX}_chunks", [])
+    chunks_v33 = st.session_state.get(f"{V33_PREFIX}_chunks", [])
 
-    if universe_v32 is None or not period_ids_v32:
-        st.session_state[f"{V32_PREFIX}_phase"] = None
-        st.error("v3.2 checkpoint is missing. Run the map again.")
-    elif period_index_v32 < len(period_ids_v32):
-        current_period_v32 = period_ids_v32[period_index_v32]
-        progress_v32 = st.progress(
-            0.33 + 0.34 * (period_index_v32 / len(period_ids_v32)),
+    if universe_v33 is None or not period_ids_v33:
+        st.session_state[f"{V33_PREFIX}_phase"] = None
+        st.error("v3.3 checkpoint is missing. Run the lab again.")
+    elif period_index_v33 < len(period_ids_v33):
+        current_period_v33 = period_ids_v33[period_index_v33]
+        progress_v33 = st.progress(
+            0.33 + 0.34 * (period_index_v33 / len(period_ids_v33)),
             text=(
-                f"2/3 · Execution outcomes · period "
-                f"{period_index_v32 + 1}/{len(period_ids_v32)}"
+                f"2/3 · Microstructure/context observations · period "
+                f"{period_index_v33 + 1}/{len(period_ids_v33)}"
             ),
         )
 
         try:
-            period_frame_v32 = universe_v32[
-                universe_v32["Period"] == current_period_v32
+            period_frame_v33 = universe_v33[
+                universe_v33["Period"] == current_period_v33
             ].copy()
 
-            chunk_v32 = build_execution_horizon_period_v32(
-                period_frame_v32,
+            chunk_v33 = build_microstructure_context_period_v33(
+                period_frame_v33,
                 forward_days=7,
                 warmup_hours=48,
+                sample_minutes=60,
             )
 
-            if chunk_v32 is not None and not chunk_v32.empty:
-                compact_cols_v32 = [
+            if chunk_v33 is not None and not chunk_v33.empty:
+                compact_cols_v33 = [
                     "Period",
                     "Symbol",
-                    "Family",
+                    "Category",
+                    "Feature",
                     "Side",
-                    "Execution",
-                    "Gross 1m bps",
+                    "Strength",
                     "Gross 3m bps",
                     "Gross 5m bps",
                     "Gross 10m bps",
                     "Gross 15m bps",
                     "Gross 30m bps",
                 ]
-                chunks_v32.append(chunk_v32[compact_cols_v32].copy())
+                chunks_v33.append(chunk_v33[compact_cols_v33].copy())
 
-            st.session_state[f"{V32_PREFIX}_chunks"] = chunks_v32
-            st.session_state[f"{V32_PREFIX}_period_index"] = (
-                period_index_v32 + 1
+            st.session_state[f"{V33_PREFIX}_chunks"] = chunks_v33
+            st.session_state[f"{V33_PREFIX}_period_index"] = (
+                period_index_v33 + 1
             )
 
             _fetch_1m_cached.cache_clear()
@@ -684,128 +686,127 @@ elif v32_phase == "events":
             _fetch_1m_cached.cache_clear()
             gc.collect()
             st.error(
-                f"v3.2 execution build failed on period "
-                f"{period_index_v32 + 1}/{len(period_ids_v32)}: {exc}"
+                f"v3.3 observation build failed on period "
+                f"{period_index_v33 + 1}/{len(period_ids_v33)}: {exc}"
             )
     else:
-        events_v32 = (
-            pd.concat(chunks_v32, ignore_index=True)
-            if chunks_v32
+        observations_v33 = (
+            pd.concat(chunks_v33, ignore_index=True)
+            if chunks_v33
             else pd.DataFrame()
         )
 
-        if events_v32.empty:
-            st.session_state[f"{V32_PREFIX}_phase"] = None
-            st.error("v3.2 produced no execution observations.")
+        if observations_v33.empty:
+            st.session_state[f"{V33_PREFIX}_phase"] = None
+            st.error("v3.3 produced no microstructure/context observations.")
         else:
-            rows_v32 = list(
-                st.session_state.get(f"{V32_PREFIX}_stage_rows", [])
+            rows_v33 = list(
+                st.session_state.get(f"{V33_PREFIX}_stage_rows", [])
             )
 
-            family_counts_v32 = (
-                events_v32[events_v32["Execution"] == "Immediate"]
-                .groupby("Family")
+            category_counts_v33 = (
+                observations_v33.groupby("Category")
                 .size()
                 .sort_values(ascending=False)
                 .to_dict()
             )
-            count_text_v32 = ", ".join(
+            count_text_v33 = ", ".join(
                 f"{name}: {count}"
-                for name, count in family_counts_v32.items()
+                for name, count in category_counts_v33.items()
             )
 
-            rows_v32.append(
+            rows_v33.append(
                 {
                     "Step": 2,
-                    "Test": "Execution Dataset",
+                    "Test": "Microstructure & Context Dataset",
                     "Status": "PASS",
                     "What became clear": (
-                        f"Built {len(events_v32)} execution observations across "
-                        f"{events_v32['Period'].nunique()} periods and "
-                        f"{events_v32['Symbol'].nunique()} symbols. "
-                        f"Underlying Immediate event counts — {count_text_v32}."
+                        f"Built {len(observations_v33)} continuous mechanism observations across "
+                        f"{observations_v33['Period'].nunique()} periods and "
+                        f"{observations_v33['Symbol'].nunique()} symbols. "
+                        f"Category observations — {count_text_v33}. "
+                        "Sampling is hourly and independent of feature magnitude."
                     ),
                 }
             )
 
-            progress_v32 = st.progress(
+            progress_v33 = st.progress(
                 0.67,
-                text="3/3 · Mapping execution timing and horizons",
-            )
-            surface_v32, candidates_v32, verdict_v32 = (
-                benchmark_execution_horizon_v32(
-                    events_v32,
-                    costs_bps=(12.0, 20.0, 30.0),
-                )
+                text="3/3 · Continuous relationship robustness screen",
             )
 
-            candidate_count_v32 = (
-                int(len(candidates_v32))
-                if candidates_v32 is not None
+            surface_v33, candidates_v33, verdict_v33 = (
+                analyze_microstructure_context_v33(observations_v33)
+            )
+
+            candidate_count_v33 = (
+                int(len(candidates_v33))
+                if candidates_v33 is not None
                 else 0
             )
-            status_v32 = (
-                "TIMING_CANDIDATE_FOUND"
-                if candidate_count_v32 > 0
-                else "NO_TIMING_CANDIDATE"
+            status_v33 = (
+                "MECHANISM_CANDIDATE_FOUND"
+                if candidate_count_v33 > 0
+                else "NO_MECHANISM_CANDIDATE"
             )
 
-            rows_v32.append(
+            rows_v33.append(
                 {
                     "Step": 3,
-                    "Test": "Execution & Horizon Map",
-                    "Status": status_v32,
-                    "What became clear": verdict_v32,
+                    "Test": "Continuous Relationship Screen",
+                    "Status": status_v33,
+                    "What became clear": verdict_v33,
                 }
             )
 
-            if status_v32 == "TIMING_CANDIDATE_FOUND":
-                next_v32 = (
-                    "Next build v3.3 Purged Walk-Forward for the surviving family/side/execution "
-                    "region only. Do not freeze a single best row from this map. Train only on past "
-                    "blocks, purge the boundary, and evaluate the next block with 12/20/30 bps costs "
-                    "plus portfolio concurrency limits."
+            if status_v33 == "MECHANISM_CANDIDATE_FOUND":
+                next_v33 = (
+                    "Next build v3.4 Purged Walk-Forward. Do not freeze a threshold from the full "
+                    "development sample. For each chronological fold, derive any feature threshold "
+                    "only inside past training periods, purge the boundary, and evaluate the next "
+                    "period. Include 12/20/30 bps cost stress and portfolio concurrency limits."
                 )
             else:
-                next_v32 = (
-                    "Execution timing and holding period did not rescue the current event families. "
-                    "Do not tune the map. Next redesign the event definition using genuinely different "
-                    "microstructure/context information before another validation layer."
+                next_v33 = (
+                    "No new microstructure/context mechanism is stable enough yet. Do not tune "
+                    "thresholds on this screen. Review the strongest descriptive relationship, "
+                    "then either simplify its economic definition or move to a genuinely different "
+                    "data source/mechanism before another validation layer."
                 )
 
-            st.session_state[f"{V32_PREFIX}_result"] = {
-                "stage_summaries": pd.DataFrame(rows_v32),
-                "next_step": next_v32,
+            st.session_state[f"{V33_PREFIX}_result"] = {
+                "stage_summaries": pd.DataFrame(rows_v33),
+                "next_step": next_v33,
             }
-            st.session_state[f"{V32_PREFIX}_phase"] = "done"
+            st.session_state[f"{V33_PREFIX}_phase"] = "done"
 
             for key in [
-                f"{V32_PREFIX}_universe",
-                f"{V32_PREFIX}_periods",
-                f"{V32_PREFIX}_period_index",
-                f"{V32_PREFIX}_chunks",
-                f"{V32_PREFIX}_stage_rows",
+                f"{V33_PREFIX}_universe",
+                f"{V33_PREFIX}_periods",
+                f"{V33_PREFIX}_period_index",
+                f"{V33_PREFIX}_chunks",
+                f"{V33_PREFIX}_stage_rows",
             ]:
                 st.session_state.pop(key, None)
 
-            del events_v32, chunks_v32, universe_v32, surface_v32, candidates_v32
+            del observations_v33, chunks_v33, universe_v33, surface_v33, candidates_v33
             _fetch_1m_cached.cache_clear()
             gc.collect()
-            progress_v32.progress(1.0, text="v3.2 execution/horizon map complete")
+            progress_v33.progress(1.0, text="v3.3 microstructure/context lab complete")
             st.rerun()
 
-v32_result = st.session_state.get(f"{V32_PREFIX}_result")
+v33_result = st.session_state.get(f"{V33_PREFIX}_result")
 
-if v32_result is not None:
-    st.success("v3.2 execution/horizon map complete")
+if v33_result is not None:
+    st.success("v3.3 microstructure/context lab complete")
     st.markdown("**Короткий висновок**")
-    for _, row in v32_result["stage_summaries"].iterrows():
+    for _, row in v33_result["stage_summaries"].iterrows():
         st.write(
             f"{row['Test']} · {row['Status']}: {row['What became clear']}"
         )
 
     st.markdown("**Далі**")
-    st.write(str(v32_result.get("next_step", "")))
+    st.write(str(v33_result.get("next_step", "")))
 
 st.subheader("Rolling Universe Validation · v1.1")
 st.caption(
