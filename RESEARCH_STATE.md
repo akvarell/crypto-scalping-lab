@@ -1,7 +1,7 @@
 # RESEARCH_STATE
 
 ## Current version
-v3.3 Microstructure & Context Event Lab
+v3.3.1 Cross-Era Relative-z Replication
 
 ## Current status
 READY_TO_RUN
@@ -69,29 +69,29 @@ Delisted historical symbols are not reconstructed by the standard public endpoin
 Historical universe is therefore not fully survivorship-free.
 
 ## Next research step
-v3.3 Microstructure & Context Event Lab
+v3.3.1 Cross-Era Relative-z Replication
 
-Implementation is ready and awaiting the development-only run.
+v3.3 completed with NO_MECHANISM_CANDIDATE, but its strongest descriptive relationship was:
+- Relative-z reversion
+- SHORT
+- 15m
+- rho +0.07
+- Q4-Q1 +15.9 bps
+- Q4 median +13.2 bps
+- positive periods 8/12
+- 99% spread CI low +2.0 bps
 
-Mechanism families:
-1. Order-flow imbalance
-2. Breadth expansion / participation
-3. Cross-sectional dislocation
-4. Microstructure reversal
+The predeclared rho >= 0.08 gate was not met, so this is NOT a candidate and the gate must not be relaxed post-hoc.
 
-Design:
-- deterministic hourly sampling, independent of feature magnitude
-- no magnitude threshold used to select observations
-- causal 5m features known at candle close
-- immediate next-tradable 1m entry
-- continuous strength -> future signed return analysis
-- horizons: 3 / 5 / 10 / 15 / 30m
-- LONG / SHORT separated
-- 99% period-cluster spread CI
-- leave-one-period stability
-- quartile effect sizes are descriptive only
-
-Do NOT open another historical holdout in v3.3.
+Replication plan:
+- freeze the exact mechanism orientation: positive relative-z dislocation -> SHORT reversion
+- fixed 15m horizon
+- same hourly sampling and immediate causal 1m execution
+- no threshold optimization
+- evaluate on two older, already-inspected eras
+- Era A: 90d window ending 270 days before anchor
+- Era B: 90d window ending 390 days before anchor
+- no new untouched window is consumed
 
 ## Target next validation
 Only a robust new candidate may advance to v3.4 Purged Walk-Forward.
