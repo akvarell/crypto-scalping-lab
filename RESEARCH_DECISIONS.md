@@ -73,3 +73,18 @@ Quartiles are used only to describe effect size.
 A full-development Q25/Q75 threshold must not become a trading rule.
 
 Any threshold used after v3.3 must be learned independently inside each training fold of a purged chronological walk-forward.
+
+
+## 13. Near-miss gates are not relaxed post-hoc
+v3.3's strongest relationship missed the predeclared rho threshold by a small amount.
+
+Decision:
+do not lower rho >= 0.08 on the same data.
+
+Instead, freeze the descriptive mechanism and test whether its sign and tail effect replicate on older already-inspected eras.
+
+## 14. Cross-era replication is not a holdout
+The v3.3.1 eras were used by earlier research for other questions.
+They are inspected data.
+
+A positive replication result is evidence of mechanism persistence, not final out-of-sample validation.
