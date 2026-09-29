@@ -15,6 +15,131 @@ FROZEN_TIERS = [
 ]
 
 MAX_HOLD_MINUTES = 10
+DIAGNOSTIC_HORIZONS = [3, 5, 10, 15]
+
+
+def _safe_ratio(value: float, baseline: float) -> float:
+    if pd.isna(value) or pd.isna(baseline) or abs(float(baseline)) < 1e-12:
+        return float("nan")
+    return float(value) / float(baseline)
+
+
+def _micro_diagnostics(one_minute: pd.DataFrame, confirm_i: int) -> dict:
+    """Features known at the close of the 1m confirmation candle only."""
+    row = one_minute.iloc[confirm_i]
+    prior3 = one_minute.iloc[max(0, confirm_i - 3):confirm_i]
+    prior10 = one_minute.iloc[max(0, confirm_i - 10):confirm_i]
+    recent = one_minute.iloc[max(0, confirm_i - 5):confirm_i + 1]
+
+    candle_range = float(row["high"]) - float(row["low"])
+    body = float(row["close"]) - float(row["open"])
+    close_location = (
+        (float(row["close"]) - float(row["low"])) / candle_range
+        if candle_range > 0
+        else float("nan")
+    )
+    body_range = body / candle_range if candle_range > 0 else float("nan")
+
+    prior3_vol = float(prior3["volume"].mean()) if not prior3.empty else float("nan")
+    prior10_trades = (
+        float(prior10["trades"].mean())
+        if not prior10.empty and "trades" in prior10
+        else float("nan")
+    )
+
+    impulse_3m = float("nan")
+    if confirm_i >= 3:
+        base = float(one_minute.iloc[confirm_i - 3]["close"])
+        if base > 0:
+            impulse_3m = (float(row["close"]) / base - 1.0) * 10_000.0
+
+    realized = recent["close"].pct_change().dropna()
+    realized_vol = float(realized.std() * 10_000.0) if len(realized) >= 3 else float("nan")
+
+    return {
+        "1m volume acceleration": _safe_ratio(float(row["volume"]), prior3_vol),
+        "1m trade acceleration": _safe_ratio(float(row.get("trades", float("nan"))), prior10_trades),
+        "1m body / range": body_range,
+        "1m close location": close_location,
+        "1m impulse 3m bps": impulse_3m,
+        "1m realized vol 5m bps": realized_vol,
+    }
+
+
+def _five_minute_diagnostics(
+    five_minute: pd.DataFrame,
+    ctx: pd.DataFrame,
+    event_time: pd.Timestamp,
+) -> dict:
+    """5m continuation/exhaustion features available at event close."""
+    try:
+        loc = five_minute.index.get_loc(event_time)
+        if not isinstance(loc, int):
+            loc = int(loc.start if hasattr(loc, "start") else loc)
+    except Exception:
+        return {}
+
+    row = five_minute.iloc[loc]
+    prior3 = five_minute.iloc[max(0, loc - 3):loc]
+    prior3_vr = float(prior3["volume_ratio"].mean()) if not prior3.empty else float("nan")
+
+    candle_range = float(row["high"]) - float(row["low"])
+    close_location = (
+        (float(row["close"]) - float(row["low"])) / candle_range
+        if candle_range > 0
+        else float("nan")
+    )
+
+    atr = float(row.get("atr", float("nan")))
+    extension_atr = (
+        (float(row["close"]) - float(row.get("ema_fast", row["close"]))) / atr
+        if pd.notna(atr) and atr > 0
+        else float("nan")
+    )
+
+    breadth_now = float(ctx.loc[event_time, "breadth"]) if event_time in ctx.index else float("nan")
+    breadth_prev = float("nan")
+    if loc >= 3:
+        prev_time = five_minute.index[loc - 3]
+        if prev_time in ctx.index:
+            breadth_prev = float(ctx.loc[prev_time, "breadth"])
+
+    impulse_age = 0
+    j = loc
+    while j >= 0 and impulse_age < 6:
+        r = five_minute.iloc[j]
+        if float(r["close"]) > float(r["open"]):
+            impulse_age += 1
+            j -= 1
+        else:
+            break
+
+    return {
+        "5m volume acceleration": _safe_ratio(float(row["volume_ratio"]), prior3_vr),
+        "5m close location": close_location,
+        "Breadth acceleration 15m": (
+            breadth_now - breadth_prev
+            if pd.notna(breadth_now) and pd.notna(breadth_prev)
+            else float("nan")
+        ),
+        "Relative extension / ATR": extension_atr,
+        "Impulse age 5m bars": float(impulse_age),
+    }
+
+
+def _forward_gross_bps(
+    one_minute: pd.DataFrame,
+    entry_i: int,
+    horizon_minutes: int,
+) -> float:
+    exit_i = entry_i + int(horizon_minutes) - 1
+    if exit_i >= len(one_minute):
+        return float("nan")
+    entry_price = float(one_minute.iloc[entry_i]["open"])
+    exit_price = float(one_minute.iloc[exit_i]["close"])
+    if entry_price <= 0:
+        return float("nan")
+    return (exit_price / entry_price - 1.0) * 10_000.0
 
 
 def _trimmed_mean(series: pd.Series) -> float:
@@ -114,7 +239,7 @@ def _evaluate_frozen_entries(
                 # already available at confirmation time, plus enough future
                 # data for the 3m confirmation window and fixed 10m exit.
                 micro_start = known_time - pd.Timedelta(minutes=30)
-                micro_end = known_time + pd.Timedelta(minutes=20)
+                micro_end = known_time + pd.Timedelta(minutes=25)
 
                 try:
                     one_minute = _fetch_1m(symbol, micro_start, micro_end)
@@ -144,7 +269,8 @@ def _evaluate_frozen_entries(
                 if entry_price <= 0:
                     continue
 
-                confirm_row = one_minute.iloc[entry_i - 1]
+                confirm_i = entry_i - 1
+                confirm_row = one_minute.iloc[confirm_i]
                 gross_bps = (exit_price / entry_price - 1.0) * 10_000.0
                 confirm_body_bps = (
                     (float(confirm_row["close"]) / float(confirm_row["open"]) - 1.0)
@@ -152,6 +278,13 @@ def _evaluate_frozen_entries(
                     if float(confirm_row["open"]) > 0
                     else 0.0
                 )
+
+                micro_diag = _micro_diagnostics(one_minute, confirm_i)
+                five_diag = _five_minute_diagnostics(five_minute, ctx, pd.Timestamp(event_time))
+                horizon_outcomes = {
+                    f"Gross {h}m bps": _forward_gross_bps(one_minute, entry_i, h)
+                    for h in DIAGNOSTIC_HORIZONS
+                }
 
                 for tier in _tier_labels(event, confirm_row):
                     rows.append(
@@ -170,6 +303,9 @@ def _evaluate_frozen_entries(
                             "5m range / ATR": float(event["range_atr"]),
                             "5m relative move / ATR": float(event["relative_move_atr"]),
                             "Breadth": float(event["breadth"]),
+                            **micro_diag,
+                            **five_diag,
+                            **horizon_outcomes,
                         }
                     )
 
