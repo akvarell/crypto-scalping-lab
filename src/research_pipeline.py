@@ -11,11 +11,24 @@ from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_valid
 
 
 ProgressCallback = Callable[[int, int, str], None]
+SummaryCallback = Callable[[int, int, str, str, str], None]
 
 
 def _notify(callback: ProgressCallback | None, step: int, total: int, label: str) -> None:
     if callback is not None:
         callback(step, total, label)
+
+
+def _notify_summary(
+    callback: SummaryCallback | None,
+    step: int,
+    total: int,
+    label: str,
+    status: str,
+    message: str,
+) -> None:
+    if callback is not None:
+        callback(step, total, label, status, message)
 
 
 def _tier_row(frame: pd.DataFrame, tier: str) -> pd.Series | None:
@@ -197,6 +210,7 @@ def run_research_pipeline(
     holdout_end_offset_days: int = 270,
     development_periods: int = 12,
     progress_callback: ProgressCallback | None = None,
+    summary_callback: SummaryCallback | None = None,
 ) -> dict:
     total_steps = 4
     timings = {}
@@ -219,6 +233,7 @@ def run_research_pipeline(
     summaries.append(
         {"Step": 1, "Test": "Rolling Universe", "Status": status, "What became clear": message}
     )
+    _notify_summary(summary_callback, 1, total_steps, "Rolling Universe", status, message)
 
     if rolling_details is None or rolling_details.empty:
         raise RuntimeError("Rolling Universe returned no historical selections.")
@@ -239,6 +254,7 @@ def run_research_pipeline(
     summaries.append(
         {"Step": 2, "Test": "Development Entry Study", "Status": status, "What became clear": message}
     )
+    _notify_summary(summary_callback, 2, total_steps, "Development Entry Study", status, message)
 
     _notify(progress_callback, 3, total_steps, "Frozen 1m Entry Holdout")
     started = time.perf_counter()
@@ -258,6 +274,7 @@ def run_research_pipeline(
     summaries.append(
         {"Step": 3, "Test": "Frozen 1m Holdout", "Status": status, "What became clear": message}
     )
+    _notify_summary(summary_callback, 3, total_steps, "Frozen 1m Holdout", status, message)
 
     _notify(progress_callback, 4, total_steps, "Regime & Feature Drift")
     started = time.perf_counter()
@@ -270,6 +287,7 @@ def run_research_pipeline(
     summaries.append(
         {"Step": 4, "Test": "Regime & Feature Drift", "Status": status, "What became clear": message}
     )
+    _notify_summary(summary_callback, 4, total_steps, "Regime & Feature Drift", status, message)
 
     summary_table = pd.DataFrame(summaries)
     timing_table = pd.DataFrame(
