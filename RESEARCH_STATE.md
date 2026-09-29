@@ -1,10 +1,10 @@
 # RESEARCH_STATE
 
 ## Current version
-v3.2 Execution & Horizon Map
+v3.3 Microstructure & Context Event Lab
 
 ## Current status
-NO_TIMING_CANDIDATE
+READY_TO_RUN
 
 ## Last completed test
 Execution & Horizon Map v3.2
@@ -71,20 +71,30 @@ Historical universe is therefore not fully survivorship-free.
 ## Next research step
 v3.3 Microstructure & Context Event Lab
 
-Do NOT run purged walk-forward yet because v3.2 produced NO_TIMING_CANDIDATE.
+Implementation is ready and awaiting the development-only run.
 
-Research new economically distinct mechanisms:
+Mechanism families:
 1. Order-flow imbalance
-2. Breadth expansion/contraction
-3. Cross-sectional dislocation normalized by ATR/dispersion
+2. Breadth expansion / participation
+3. Cross-sectional dislocation
 4. Microstructure reversal
 
-Start with a broad causal event/feature dataset.
-Do not tune thresholds first.
-Evaluate continuous feature -> future return relationships across 3/5/10/15/30m, LONG/SHORT separately.
+Design:
+- deterministic hourly sampling, independent of feature magnitude
+- no magnitude threshold used to select observations
+- causal 5m features known at candle close
+- immediate next-tradable 1m entry
+- continuous strength -> future signed return analysis
+- horizons: 3 / 5 / 10 / 15 / 30m
+- LONG / SHORT separated
+- 99% period-cluster spread CI
+- leave-one-period stability
+- quartile effect sizes are descriptive only
+
+Do NOT open another historical holdout in v3.3.
 
 ## Target next validation
 Only a robust new candidate may advance to v3.4 Purged Walk-Forward.
 
 ## Latest repository commit
-1239326cfadcc109bc46d0cb7f6c48d32adda4f9
+17c9ff15c7af7bac0ddd19b646025fee9c21c3b5
