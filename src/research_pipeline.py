@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import io
 import time
-import zipfile
 from typing import Callable
 
 import pandas as pd
@@ -305,47 +303,3 @@ def run_research_pipeline(
         "next_allowed_test": next_allowed_test,
         "research_anchor": RESEARCH_ANCHOR_UTC.isoformat(),
     }
-
-
-def build_research_bundle(result: dict) -> bytes:
-    """Create a downloadable ZIP with CSV tables and a short protocol summary."""
-    files = {
-        "01_rolling_periods.csv": result["rolling_periods"],
-        "02_rolling_details.csv": result["rolling_details"],
-        "03_development_entry_summary.csv": result["development_summary"],
-        "04_development_entry_events.csv": result["development_details"],
-        "05_frozen_holdout_summary.csv": result["holdout_summary"],
-        "06_frozen_holdout_events.csv": result["holdout_details"],
-        "07_feature_drift_edge.csv": result["drift_edge"],
-        "08_feature_distribution_drift.csv": result["feature_drift"],
-        "09_feature_return_relationship.csv": result["feature_corr"],
-        "10_stage_summaries.csv": result["stage_summaries"],
-        "11_timings.csv": result["timings"],
-    }
-
-    notes = [
-        "Crypto Scalping Lab Research Pipeline",
-        f"Frozen research anchor: {result.get('research_anchor', '')}",
-        "",
-        "Automatic stage summaries:",
-    ]
-    for _, row in result["stage_summaries"].iterrows():
-        notes.append(
-            f"{int(row['Step'])}. {row['Test']} [{row['Status']}]: {row['What became clear']}"
-        )
-    notes.extend(
-        [
-            "",
-            "Next allowed test:",
-            str(result.get("next_allowed_test", "")),
-        ]
-    )
-
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for name, frame in files.items():
-            if isinstance(frame, pd.DataFrame):
-                zf.writestr(name, frame.to_csv(index=False))
-        zf.writestr("README.txt", "\n".join(notes))
-
-    return buffer.getvalue()
