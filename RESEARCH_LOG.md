@@ -245,3 +245,78 @@ Call REPLICATED only if:
 
 Even REPLICATED is not strategy validation because both eras are already inspected.
 A replicated mechanism may advance only to purged chronological walk-forward.
+
+
+---
+
+## 2026-09-29 — v3.3.1 Cross-Era Relative-z Replication — RESULT
+
+### Frozen mechanism
+Positive relative-z dislocation -> SHORT reversion, fixed 15m horizon.
+No threshold, side or horizon changes were allowed after v3.3.
+
+### Result
+Status: NOT_REPLICATED
+
+Era A:
+- 4915 events / 12 periods / 26 symbols
+- rho +0.04
+- Q4-Q1 -6.8 bps
+- Q4 median +8.3 bps
+- positive periods 8/12
+- 99% spread CI low -28.6 bps
+
+Era B:
+- 5407 events / 12 periods / 25 symbols
+- rho +0.06
+- Q4-Q1 +7.0 bps
+- Q4 median +11.2 bps
+- positive periods 10/12
+- 99% spread CI low +2.3 bps
+
+Pooled:
+- 10322 events / 24 periods / 49 symbols
+- rho +0.05
+- Q4-Q1 +0.5 bps
+- Q4 median +9.5 bps
+- positive periods 17/24
+- 99% spread CI low -11.6 bps
+
+### Conclusion
+The exact v3.3 relative-z near-miss does not replicate cleanly across older eras.
+Reject it without changing side, horizon or threshold definition.
+
+---
+
+## 2026-09-29 — v3.3.2 Futures Positioning & Basis Lab — PRE-RUN HYPOTHESIS
+
+### Why
+Spot price-shape, timing, order-flow, breadth and cross-sectional dislocation mechanisms have not produced a stable edge.
+A genuinely different information source is required before declaring NO_EDGE_FOUND.
+
+### Economic hypothesis
+Short-horizon spot returns may contain information from perpetual-futures crowding:
+- premium/index dislocation may reflect leveraged directional demand;
+- extreme or changing premium may either continue briefly or mean-revert;
+- funding sign/magnitude can proxy persistent positioning pressure;
+- futures-vs-spot basis changes may reveal temporary crowding/dislocation.
+
+### Predeclared mechanism orientations
+Both continuation and reversion are allowed only where they represent distinct economic hypotheses and are labeled separately before results.
+
+### Data/timing
+- Binance USD-M public funding history
+- Binance USD-M premium-index klines
+- Binance USD-M futures klines where available
+- only completed records at or before known_time
+- funding record must satisfy fundingTime <= known_time
+- deterministic hourly sampling
+- spot outcome entry uses the first tradable 1m open after known_time
+
+Historical open-interest is excluded because the public historical endpoint is limited to recent data and cannot support the frozen historical window consistently.
+
+### Evaluation
+Continuous strength relationships only.
+No threshold optimization.
+Horizons: 3 / 5 / 10 / 15 / 30m.
+Strict period-cluster robustness before any purged walk-forward.
