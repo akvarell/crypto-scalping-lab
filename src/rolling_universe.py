@@ -16,6 +16,10 @@ EXCLUDED_BASES = {
     "USDT", "USDC", "FDUSD", "TUSD", "DAI", "USDP", "EUR", "TRY", "GBP", "BRL",
 }
 
+# Frozen research anchor. Historical research must be reproducible across reruns.
+# Live/current-market features are separate from this validation clock.
+RESEARCH_ANCHOR_UTC = pd.Timestamp("2026-09-29T00:00:00Z")
+
 
 def _get(path: str, params: dict | None = None, timeout: int = 20):
     last_error = None
@@ -232,11 +236,13 @@ def run_rolling_universe_validation(
     select_top_n: int = 5,
     min_daily_turnover_usd: float = 5_000_000.0,
     end_offset_days: int = 0,
+    as_of: str | pd.Timestamp | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Validate whether the screener predicts next-period opportunity.
 
     Historical candidate pools are built from trailing daily turnover known at
     each selection date. end_offset_days allows non-overlapping older holdouts.
+    The research clock is frozen by default so reruns use identical boundaries.
 
     Remaining caveat: the master symbol list is still based on pairs trading
     today, so delisted assets are not reconstructed yet.
@@ -248,10 +254,18 @@ def run_rolling_universe_validation(
     select_top_n = max(1, min(int(select_top_n), 10))
 
     end_offset_days = max(0, min(int(end_offset_days), 730))
-    now = (
-        pd.Timestamp.now(tz="UTC").floor("h")
-        - pd.Timedelta(days=end_offset_days)
-    )
+
+    if as_of is None:
+        anchor = RESEARCH_ANCHOR_UTC
+    else:
+        anchor = pd.Timestamp(as_of)
+        if anchor.tzinfo is None:
+            anchor = anchor.tz_localize("UTC")
+        else:
+            anchor = anchor.tz_convert("UTC")
+        anchor = anchor.floor("h")
+
+    now = anchor - pd.Timedelta(days=end_offset_days)
     analysis_start = now - pd.Timedelta(days=horizon_days)
     history_start = analysis_start - pd.Timedelta(days=lookback_days + 2)
 
