@@ -5,6 +5,7 @@ from typing import Callable
 
 import pandas as pd
 
+from src.continuation_exhaustion import analyze_continuation_exhaustion
 from src.entry_quality_holdout import _evaluate_frozen_entries, run_frozen_1m_entry_holdout
 from src.feature_drift import compare_feature_drift
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
@@ -212,7 +213,7 @@ def run_research_pipeline(
     progress_callback: ProgressCallback | None = None,
     summary_callback: SummaryCallback | None = None,
 ) -> dict:
-    total_steps = 4
+    total_steps = 5
     timings = {}
     summaries = []
 
@@ -289,6 +290,38 @@ def run_research_pipeline(
     )
     _notify_summary(summary_callback, 4, total_steps, "Regime & Feature Drift", status, message)
 
+    _notify(progress_callback, 5, total_steps, "Continuation vs Exhaustion")
+    started = time.perf_counter()
+    continuation_summary, continuation_relationships, continuation_verdict = (
+        analyze_continuation_exhaustion(development_details)
+    )
+    timings["Continuation vs Exhaustion"] = time.perf_counter() - started
+
+    coherent_count = int(
+        (
+            continuation_summary["Coherent diagnostic"].astype(str) == "YES"
+        ).sum()
+    )
+    continuation_status = (
+        "HYPOTHESIS_FOUND" if coherent_count > 0 else "NO_CLEAR_SPLIT"
+    )
+    summaries.append(
+        {
+            "Step": 5,
+            "Test": "Continuation vs Exhaustion",
+            "Status": continuation_status,
+            "What became clear": continuation_verdict,
+        }
+    )
+    _notify_summary(
+        summary_callback,
+        5,
+        total_steps,
+        "Continuation vs Exhaustion",
+        continuation_status,
+        continuation_verdict,
+    )
+
     summary_table = pd.DataFrame(summaries)
     timing_table = pd.DataFrame(
         [
@@ -298,9 +331,9 @@ def run_research_pipeline(
     )
 
     next_allowed_test = (
-        "STOP after diagnostics. Form ONE new hypothesis from v2.4, freeze it, then test it on "
-        "a third untouched 120-day window ending 390 days before the frozen research anchor. "
-        "Do not use the v2.3 window again for optimization."
+        "Use v2.6 only to formulate ONE simple continuation-vs-exhaustion hypothesis. "
+        "Freeze that rule before opening the third untouched 120-day window ending 390 days "
+        "before the frozen research anchor. Do not retune it on the v2.3 window."
     )
 
     return {
@@ -316,6 +349,9 @@ def run_research_pipeline(
         "drift_edge": drift_edge,
         "feature_drift": feature_drift,
         "feature_corr": feature_corr,
+        "continuation_summary": continuation_summary,
+        "continuation_relationships": continuation_relationships,
+        "continuation_verdict": continuation_verdict,
         "stage_summaries": summary_table,
         "timings": timing_table,
         "next_allowed_test": next_allowed_test,
