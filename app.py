@@ -25,9 +25,9 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
-from src.event_family_benchmark_v31 import (
-    benchmark_event_families_v31,
-    build_event_family_period_v31,
+from src.execution_horizon_v32 import (
+    benchmark_execution_horizon_v32,
+    build_execution_horizon_period_v32,
 )
 from src.research_universe_v3 import build_research_universe_v3
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
@@ -105,7 +105,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v3.1")
+st.title("Crypto Scalping Lab v3.2")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -551,40 +551,40 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Event Family Benchmark · v3.1")
+st.subheader("Execution & Horizon Map · v3.2")
 st.caption(
-    "Compare four causal event families on the same v3 data layer and the same next-1m execution. "
-    "Step 2 is checkpointed period-by-period. No new fixed historical holdout is opened."
+    "Same four event families, two execution timings and six holding horizons. "
+    "Step 2 is checkpointed period-by-period. No event thresholds are tuned."
 )
 
-run_v31 = st.button(
-    "Run v3.1 Event Family Benchmark",
+run_v32 = st.button(
+    "Run v3.2 Execution & Horizon Map",
     type="primary",
     use_container_width=True,
-    key="run_event_family_v31",
+    key="run_execution_horizon_v32",
 )
 
-V31_PREFIX = "event_family_v31"
+V32_PREFIX = "execution_horizon_v32"
 
-if run_v31:
+if run_v32:
     for key in [
-        f"{V31_PREFIX}_result",
-        f"{V31_PREFIX}_phase",
-        f"{V31_PREFIX}_universe",
-        f"{V31_PREFIX}_periods",
-        f"{V31_PREFIX}_period_index",
-        f"{V31_PREFIX}_event_chunks",
-        f"{V31_PREFIX}_stage_rows",
+        f"{V32_PREFIX}_result",
+        f"{V32_PREFIX}_phase",
+        f"{V32_PREFIX}_universe",
+        f"{V32_PREFIX}_periods",
+        f"{V32_PREFIX}_period_index",
+        f"{V32_PREFIX}_chunks",
+        f"{V32_PREFIX}_stage_rows",
     ]:
         st.session_state.pop(key, None)
-    st.session_state[f"{V31_PREFIX}_phase"] = "universe"
+    st.session_state[f"{V32_PREFIX}_phase"] = "universe"
 
-v31_phase = st.session_state.get(f"{V31_PREFIX}_phase")
+v32_phase = st.session_state.get(f"{V32_PREFIX}_phase")
 
-if v31_phase == "universe":
-    progress_v31 = st.progress(0.0, text="1/3 · Building historical universe")
+if v32_phase == "universe":
+    progress_v32 = st.progress(0.0, text="1/3 · Building historical universe")
     try:
-        periods_v31, universe_v31, universe_summary_v31 = build_research_universe_v3(
+        periods_v32, universe_v32, universe_summary_v32 = build_research_universe_v3(
             horizon_days=90,
             lookback_days=14,
             forward_days=7,
@@ -596,81 +596,85 @@ if v31_phase == "universe":
             as_of=RESEARCH_ANCHOR_UTC,
         )
 
-        period_ids_v31 = sorted(universe_v31["Period"].unique().tolist())
-        universe_status_v31 = (
-            "PASS_WITH_CAVEAT" if len(periods_v31) >= 8 else "REVIEW"
+        period_ids_v32 = sorted(universe_v32["Period"].unique().tolist())
+        universe_status_v32 = (
+            "PASS_WITH_CAVEAT" if len(periods_v32) >= 8 else "REVIEW"
         )
-        universe_message_v31 = (
-            f"Built {len(periods_v31)} periods with top-5 trade symbols and top-15 context symbols. "
-            f"Survivorship status remains {universe_summary_v31['survivorship_status']}."
+        universe_message_v32 = (
+            f"Built {len(periods_v32)} periods with top-5 trade symbols and top-15 context symbols. "
+            f"Survivorship status remains {universe_summary_v32['survivorship_status']}."
         )
 
-        st.session_state[f"{V31_PREFIX}_universe"] = universe_v31
-        st.session_state[f"{V31_PREFIX}_periods"] = period_ids_v31
-        st.session_state[f"{V31_PREFIX}_period_index"] = 0
-        st.session_state[f"{V31_PREFIX}_event_chunks"] = []
-        st.session_state[f"{V31_PREFIX}_stage_rows"] = [
+        st.session_state[f"{V32_PREFIX}_universe"] = universe_v32
+        st.session_state[f"{V32_PREFIX}_periods"] = period_ids_v32
+        st.session_state[f"{V32_PREFIX}_period_index"] = 0
+        st.session_state[f"{V32_PREFIX}_chunks"] = []
+        st.session_state[f"{V32_PREFIX}_stage_rows"] = [
             {
                 "Step": 1,
                 "Test": "Historical Universe",
-                "Status": universe_status_v31,
-                "What became clear": universe_message_v31,
+                "Status": universe_status_v32,
+                "What became clear": universe_message_v32,
             }
         ]
-        st.session_state[f"{V31_PREFIX}_phase"] = "events"
+        st.session_state[f"{V32_PREFIX}_phase"] = "events"
         gc.collect()
         st.rerun()
     except Exception as exc:
-        st.session_state[f"{V31_PREFIX}_phase"] = None
-        st.error(f"v3.1 universe build failed: {exc}")
+        st.session_state[f"{V32_PREFIX}_phase"] = None
+        st.error(f"v3.2 universe build failed: {exc}")
 
-elif v31_phase == "events":
-    universe_v31 = st.session_state.get(f"{V31_PREFIX}_universe")
-    period_ids_v31 = st.session_state.get(f"{V31_PREFIX}_periods", [])
-    period_index_v31 = int(
-        st.session_state.get(f"{V31_PREFIX}_period_index", 0)
+elif v32_phase == "events":
+    universe_v32 = st.session_state.get(f"{V32_PREFIX}_universe")
+    period_ids_v32 = st.session_state.get(f"{V32_PREFIX}_periods", [])
+    period_index_v32 = int(
+        st.session_state.get(f"{V32_PREFIX}_period_index", 0)
     )
-    chunks_v31 = st.session_state.get(f"{V31_PREFIX}_event_chunks", [])
+    chunks_v32 = st.session_state.get(f"{V32_PREFIX}_chunks", [])
 
-    if universe_v31 is None or not period_ids_v31:
-        st.session_state[f"{V31_PREFIX}_phase"] = None
-        st.error("v3.1 checkpoint is missing. Run the benchmark again.")
-    elif period_index_v31 < len(period_ids_v31):
-        current_period_v31 = period_ids_v31[period_index_v31]
-        progress_v31 = st.progress(
-            0.33 + 0.34 * (period_index_v31 / len(period_ids_v31)),
+    if universe_v32 is None or not period_ids_v32:
+        st.session_state[f"{V32_PREFIX}_phase"] = None
+        st.error("v3.2 checkpoint is missing. Run the map again.")
+    elif period_index_v32 < len(period_ids_v32):
+        current_period_v32 = period_ids_v32[period_index_v32]
+        progress_v32 = st.progress(
+            0.33 + 0.34 * (period_index_v32 / len(period_ids_v32)),
             text=(
-                f"2/3 · Event families · period "
-                f"{period_index_v31 + 1}/{len(period_ids_v31)}"
+                f"2/3 · Execution outcomes · period "
+                f"{period_index_v32 + 1}/{len(period_ids_v32)}"
             ),
         )
 
         try:
-            period_frame_v31 = universe_v31[
-                universe_v31["Period"] == current_period_v31
+            period_frame_v32 = universe_v32[
+                universe_v32["Period"] == current_period_v32
             ].copy()
 
-            chunk_v31 = build_event_family_period_v31(
-                period_frame_v31,
+            chunk_v32 = build_execution_horizon_period_v32(
+                period_frame_v32,
                 forward_days=7,
                 warmup_hours=48,
             )
 
-            if chunk_v31 is not None and not chunk_v31.empty:
-                compact_v31 = chunk_v31[
-                    [
-                        "Period",
-                        "Symbol",
-                        "Family",
-                        "Side",
-                        "Gross 10m bps",
-                    ]
-                ].copy()
-                chunks_v31.append(compact_v31)
+            if chunk_v32 is not None and not chunk_v32.empty:
+                compact_cols_v32 = [
+                    "Period",
+                    "Symbol",
+                    "Family",
+                    "Side",
+                    "Execution",
+                    "Gross 1m bps",
+                    "Gross 3m bps",
+                    "Gross 5m bps",
+                    "Gross 10m bps",
+                    "Gross 15m bps",
+                    "Gross 30m bps",
+                ]
+                chunks_v32.append(chunk_v32[compact_cols_v32].copy())
 
-            st.session_state[f"{V31_PREFIX}_event_chunks"] = chunks_v31
-            st.session_state[f"{V31_PREFIX}_period_index"] = (
-                period_index_v31 + 1
+            st.session_state[f"{V32_PREFIX}_chunks"] = chunks_v32
+            st.session_state[f"{V32_PREFIX}_period_index"] = (
+                period_index_v32 + 1
             )
 
             _fetch_1m_cached.cache_clear()
@@ -680,125 +684,128 @@ elif v31_phase == "events":
             _fetch_1m_cached.cache_clear()
             gc.collect()
             st.error(
-                f"v3.1 event-family build failed on period "
-                f"{period_index_v31 + 1}/{len(period_ids_v31)}: {exc}"
+                f"v3.2 execution build failed on period "
+                f"{period_index_v32 + 1}/{len(period_ids_v32)}: {exc}"
             )
     else:
-        events_v31 = (
-            pd.concat(chunks_v31, ignore_index=True)
-            if chunks_v31
+        events_v32 = (
+            pd.concat(chunks_v32, ignore_index=True)
+            if chunks_v32
             else pd.DataFrame()
         )
 
-        if events_v31.empty:
-            st.session_state[f"{V31_PREFIX}_phase"] = None
-            st.error("v3.1 produced no event-family observations.")
+        if events_v32.empty:
+            st.session_state[f"{V32_PREFIX}_phase"] = None
+            st.error("v3.2 produced no execution observations.")
         else:
-            counts_v31 = (
-                events_v31.groupby("Family")
+            rows_v32 = list(
+                st.session_state.get(f"{V32_PREFIX}_stage_rows", [])
+            )
+
+            family_counts_v32 = (
+                events_v32[events_v32["Execution"] == "Immediate"]
+                .groupby("Family")
                 .size()
                 .sort_values(ascending=False)
                 .to_dict()
             )
-            count_text_v31 = ", ".join(
+            count_text_v32 = ", ".join(
                 f"{name}: {count}"
-                for name, count in counts_v31.items()
+                for name, count in family_counts_v32.items()
             )
 
-            rows_v31 = list(
-                st.session_state.get(f"{V31_PREFIX}_stage_rows", [])
-            )
-            rows_v31.append(
+            rows_v32.append(
                 {
                     "Step": 2,
-                    "Test": "Event Family Dataset",
+                    "Test": "Execution Dataset",
                     "Status": "PASS",
                     "What became clear": (
-                        f"Built {len(events_v31)} comparable events across "
-                        f"{events_v31['Period'].nunique()} periods and "
-                        f"{events_v31['Symbol'].nunique()} symbols. "
-                        f"Family counts — {count_text_v31}."
+                        f"Built {len(events_v32)} execution observations across "
+                        f"{events_v32['Period'].nunique()} periods and "
+                        f"{events_v32['Symbol'].nunique()} symbols. "
+                        f"Underlying Immediate event counts — {count_text_v32}."
                     ),
                 }
             )
 
-            progress_v31 = st.progress(
+            progress_v32 = st.progress(
                 0.67,
-                text="3/3 · Benchmarking families at 12/20/30 bps",
+                text="3/3 · Mapping execution timing and horizons",
             )
-            benchmark_v31, verdict_v31 = benchmark_event_families_v31(
-                events_v31,
-                costs_bps=(12.0, 20.0, 30.0),
-            )
-
-            candidate_count_v31 = int(
-                (
-                    benchmark_v31["Family candidate"].astype(str)
-                    == "YES"
-                ).sum()
-            )
-            status_v31 = (
-                "FAMILY_CANDIDATE_FOUND"
-                if candidate_count_v31 > 0
-                else "NO_FAMILY_CANDIDATE"
+            surface_v32, candidates_v32, verdict_v32 = (
+                benchmark_execution_horizon_v32(
+                    events_v32,
+                    costs_bps=(12.0, 20.0, 30.0),
+                )
             )
 
-            rows_v31.append(
+            candidate_count_v32 = (
+                int(len(candidates_v32))
+                if candidates_v32 is not None
+                else 0
+            )
+            status_v32 = (
+                "TIMING_CANDIDATE_FOUND"
+                if candidate_count_v32 > 0
+                else "NO_TIMING_CANDIDATE"
+            )
+
+            rows_v32.append(
                 {
                     "Step": 3,
-                    "Test": "Event Family Benchmark",
-                    "Status": status_v31,
-                    "What became clear": verdict_v31,
+                    "Test": "Execution & Horizon Map",
+                    "Status": status_v32,
+                    "What became clear": verdict_v32,
                 }
             )
 
-            if status_v31 == "FAMILY_CANDIDATE_FOUND":
-                next_v31 = (
-                    "Next build v3.2 Purged Walk-Forward for the surviving family/side only. "
-                    "Training blocks may choose direction/thresholds using past data only; "
-                    "the next chronological block is evaluation. Include 12/20/30 bps costs "
-                    "and portfolio concurrency limits."
+            if status_v32 == "TIMING_CANDIDATE_FOUND":
+                next_v32 = (
+                    "Next build v3.3 Purged Walk-Forward for the surviving family/side/execution "
+                    "region only. Do not freeze a single best row from this map. Train only on past "
+                    "blocks, purge the boundary, and evaluate the next block with 12/20/30 bps costs "
+                    "plus portfolio concurrency limits."
                 )
             else:
-                next_v31 = (
-                    "No family passed the strict benchmark. Do not tune thresholds yet. "
-                    "Inspect which family is closest to break-even and redesign the event definition "
-                    "economically before another validation layer."
+                next_v32 = (
+                    "Execution timing and holding period did not rescue the current event families. "
+                    "Do not tune the map. Next redesign the event definition using genuinely different "
+                    "microstructure/context information before another validation layer."
                 )
 
-            st.session_state[f"{V31_PREFIX}_result"] = {
-                "stage_summaries": pd.DataFrame(rows_v31),
-                "next_step": next_v31,
+            st.session_state[f"{V32_PREFIX}_result"] = {
+                "stage_summaries": pd.DataFrame(rows_v32),
+                "next_step": next_v32,
             }
-            st.session_state[f"{V31_PREFIX}_phase"] = "done"
+            st.session_state[f"{V32_PREFIX}_phase"] = "done"
 
             for key in [
-                f"{V31_PREFIX}_universe",
-                f"{V31_PREFIX}_periods",
-                f"{V31_PREFIX}_period_index",
-                f"{V31_PREFIX}_event_chunks",
-                f"{V31_PREFIX}_stage_rows",
+                f"{V32_PREFIX}_universe",
+                f"{V32_PREFIX}_periods",
+                f"{V32_PREFIX}_period_index",
+                f"{V32_PREFIX}_chunks",
+                f"{V32_PREFIX}_stage_rows",
             ]:
                 st.session_state.pop(key, None)
 
-            del events_v31, chunks_v31, universe_v31, benchmark_v31
+            del events_v32, chunks_v32, universe_v32, surface_v32, candidates_v32
             _fetch_1m_cached.cache_clear()
             gc.collect()
-            progress_v31.progress(1.0, text="v3.1 benchmark complete")
+            progress_v32.progress(1.0, text="v3.2 execution/horizon map complete")
             st.rerun()
 
-v31_result = st.session_state.get(f"{V31_PREFIX}_result")
+v32_result = st.session_state.get(f"{V32_PREFIX}_result")
 
-if v31_result is not None:
-    st.success("v3.1 event family benchmark complete")
+if v32_result is not None:
+    st.success("v3.2 execution/horizon map complete")
     st.markdown("**Короткий висновок**")
-    for _, row in v31_result["stage_summaries"].iterrows():
+    for _, row in v32_result["stage_summaries"].iterrows():
         st.write(
             f"{row['Test']} · {row['Status']}: {row['What became clear']}"
         )
 
     st.markdown("**Далі**")
-    st.write(str(v31_result.get("next_step", "")))
+    st.write(str(v32_result.get("next_step", "")))
 
 st.subheader("Rolling Universe Validation · v1.1")
 st.caption(
