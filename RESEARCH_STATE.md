@@ -1,36 +1,42 @@
 # RESEARCH_STATE
 
 ## Current version
-v3.3.1 Cross-Era Relative-z Replication
+v3.3.2 Futures Positioning & Basis Lab
 
 ## Current status
-READY_TO_RUN
+IMPLEMENTING
 
 ## Last completed test
-Microstructure & Context Event Lab v3.3
+Cross-Era Relative-z Replication v3.3.1
 
 ## Last result
-- 94,526 continuous mechanism observations
-- 12 periods
-- 28 symbols
-- Order flow: 39,972 observations
-- Breadth: 21,331
-- Dislocation: 20,140
-- Microstructure reversal: 13,083
-- Status: NO_MECHANISM_CANDIDATE
+v3.3.1 Cross-Era Relative-z Replication: NOT_REPLICATED
 
-Strongest descriptive relationship:
-- Relative-z reversion
-- SHORT
-- 15m
-- Spearman: +0.07
-- Q4-Q1 gross spread: +15.9 bps
-- Q4 gross median: +13.2 bps
-- Positive periods: 8/12
-- 99% spread CI low: +2.0 bps
+Era A:
+- 4915 events / 12 periods / 26 symbols
+- rho +0.04
+- Q4-Q1 -6.8 bps
+- Q4 median +8.3 bps
+- positive periods 8/12
+- 99% spread CI low -28.6 bps
 
-The predeclared rho >= 0.08 gate was not met.
-This is diagnostic evidence only, not a validated edge.
+Era B:
+- 5407 events / 12 periods / 25 symbols
+- rho +0.06
+- Q4-Q1 +7.0 bps
+- Q4 median +11.2 bps
+- positive periods 10/12
+- 99% spread CI low +2.3 bps
+
+Pooled older eras:
+- 10322 events / 24 periods / 49 symbols
+- rho +0.05
+- Q4-Q1 +0.5 bps
+- Q4 median +9.5 bps
+- positive periods 17/24
+- 99% spread CI low -11.6 bps
+
+The exact relative-z SHORT 15m near-miss did not replicate cleanly and is rejected without retuning.
 
 ## What is rejected
 - Plain breakout continuation as a broad edge
@@ -41,6 +47,7 @@ This is diagnostic evidence only, not a validated edge.
 - Frozen low-close-location v2.9 candidate path
 - The four v3.1 event families as currently defined
 - Execution timing / holding-horizon rescue of those same event families
+- Relative-z reversion / SHORT / 15m cross-era replication
 
 ## Inspected data
 All historical windows used through v2.x are inspected and must not be called untouched again.
@@ -69,29 +76,30 @@ Delisted historical symbols are not reconstructed by the standard public endpoin
 Historical universe is therefore not fully survivorship-free.
 
 ## Next research step
-v3.3.1 Cross-Era Relative-z Replication
+v3.3.2 Futures Positioning & Basis Lab
 
-v3.3 completed with NO_MECHANISM_CANDIDATE, but its strongest descriptive relationship was:
-- Relative-z reversion
-- SHORT
-- 15m
-- rho +0.07
-- Q4-Q1 +15.9 bps
-- Q4 median +13.2 bps
-- positive periods 8/12
-- 99% spread CI low +2.0 bps
+This is a genuinely different data source/mechanism, not a retune of the failed spot-event families.
 
-The predeclared rho >= 0.08 gate was not met, so this is NOT a candidate and the gate must not be relaxed post-hoc.
+Pre-run mechanism families:
+1. Perpetual premium crowding / reversion
+2. Perpetual premium continuation
+3. Premium change / shock
+4. Funding crowding / reversion
+5. Funding change
+6. Futures-vs-spot basis/dislocation where historical futures klines exist
 
-Replication plan:
-- freeze the exact mechanism orientation: positive relative-z dislocation -> SHORT reversion
-- fixed 15m horizon
-- same hourly sampling and immediate causal 1m execution
-- no threshold optimization
-- evaluate on two older, already-inspected eras
-- Era A: 90d window ending 270 days before anchor
-- Era B: 90d window ending 390 days before anchor
-- no new untouched window is consumed
+Design:
+- development-only 90-day v3 research window
+- same frozen spot trade universe
+- hourly deterministic sampling
+- only completed futures/spot bars available by known_time
+- funding uses only records with fundingTime <= known_time
+- no open-interest history because Binance historical OI endpoint is limited to recent data and is not comparable across the frozen research window
+- no magnitude threshold optimization
+- continuous Strength -> future spot return
+- 3 / 5 / 10 / 15 / 30m horizons
+- LONG / SHORT separately
+- strict period-cluster robustness
 
 ## Target next validation
 Only a robust new candidate may advance to v3.4 Purged Walk-Forward.
