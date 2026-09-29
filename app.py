@@ -9,6 +9,7 @@ from src.backtest import run_backtest
 from src.counter_regime_holdout import run_counter_regime_holdout
 from src.data import fetch_ohlcv
 from src.direction_regime_study import run_direction_regime_study
+from src.drift_lab import run_regime_feature_drift_lab
 from src.dynamic_scalping import run_dynamic_universe_scalping
 from src.edge_diagnostics import evaluate_edge_diagnostics
 from src.entry_quality_holdout import run_frozen_1m_entry_holdout
@@ -97,7 +98,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.3")
+st.title("Crypto Scalping Lab v2.4")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -2318,6 +2319,183 @@ if frozen_1m_summary is not None:
                     hide_index=True,
                 )
 
+st.subheader("Regime & Feature Drift Lab · v2.4")
+st.caption(
+    "v2.2 looked strong in the recent development sample, while v2.3 failed on an older sample. "
+    "This block regenerates comparable events and measures what changed in the signal environment. "
+    "It is descriptive only: it does not optimize new thresholds from the former holdout."
+)
+
+if rolling_details is None or rolling_details.empty:
+    st.info("Run Rolling Universe Validation first. v2.4 needs the recent historical selections as its development sample.")
+else:
+    dl1, dl2, dl3 = st.columns(3)
+    with dl1:
+        drift_dev_periods = st.select_slider(
+            "Recent development periods",
+            options=[8, 12],
+            value=12,
+            key="drift_dev_periods",
+        )
+    with dl2:
+        drift_holdout_days = st.select_slider(
+            "Older comparison window",
+            options=[90, 120],
+            value=120,
+            format_func=lambda x: f"{x} days",
+            key="drift_holdout_days",
+        )
+    with dl3:
+        st.metric("Older window ends", "270 days ago")
+
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        drift_fee = st.number_input(
+            "Drift-lab fee per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=4.0,
+            step=0.5,
+            key="drift_fee",
+        )
+    with dc2:
+        drift_slippage = st.number_input(
+            "Drift-lab slippage per side, bps",
+            min_value=0.0,
+            max_value=20.0,
+            value=2.0,
+            step=0.5,
+            key="drift_slippage",
+        )
+
+    drift_signature = (
+        saved_rolling_signature,
+        int(drift_dev_periods),
+        int(drift_holdout_days),
+        int(rolling_lookback),
+        int(rolling_forward),
+        int(rolling_pool),
+        int(rolling_top_n),
+        float(rolling_min_turnover_m),
+        float(drift_fee),
+        float(drift_slippage),
+    )
+
+    run_drift_lab = st.button(
+        "Run regime & feature drift lab",
+        use_container_width=True,
+        key="run_regime_feature_drift_lab",
+    )
+
+    if run_drift_lab:
+        with st.spinner(
+            "Regenerating comparable recent/older events and measuring feature drift. "
+            "This can take several minutes because 1m confirmation windows are downloaded around candidate events..."
+        ):
+            try:
+                drift_edge, drift_features, drift_corr, drift_dev_summary, drift_hold_summary = run_regime_feature_drift_lab(
+                    rolling_details,
+                    development_periods=int(drift_dev_periods),
+                    holdout_days=int(drift_holdout_days),
+                    holdout_end_offset_days=270,
+                    lookback_days=int(rolling_lookback),
+                    forward_days=int(rolling_forward),
+                    pool_size=int(rolling_pool),
+                    select_top_n=int(rolling_top_n),
+                    min_daily_turnover_usd=float(rolling_min_turnover_m) * 1_000_000.0,
+                    fee_bps=float(drift_fee),
+                    slippage_bps=float(drift_slippage),
+                )
+                st.session_state["drift_edge"] = drift_edge
+                st.session_state["drift_features"] = drift_features
+                st.session_state["drift_corr"] = drift_corr
+                st.session_state["drift_dev_summary"] = drift_dev_summary
+                st.session_state["drift_hold_summary"] = drift_hold_summary
+                st.session_state["drift_signature"] = drift_signature
+            except Exception as exc:
+                st.error(f"Regime & Feature Drift Lab failed: {exc}")
+
+    drift_edge = st.session_state.get("drift_edge")
+    drift_features = st.session_state.get("drift_features")
+    drift_corr = st.session_state.get("drift_corr")
+    saved_drift_signature = st.session_state.get("drift_signature")
+
+    if drift_edge is not None:
+        if saved_drift_signature != drift_signature:
+            st.info("Drift-lab settings changed. Run it again to refresh the comparison.")
+        else:
+            st.markdown("**1. Edge stability: recent development vs older sample**")
+            shown_drift_edge = drift_edge.copy()
+            for col in [
+                "Top symbol share %",
+                "Gross avg bps",
+                "Gross median bps",
+                "Trimmed gross avg bps",
+                "Net avg bps",
+                "Net median bps",
+                "Net positive events %",
+            ]:
+                if col in shown_drift_edge:
+                    shown_drift_edge[col] = shown_drift_edge[col].round(2)
+            st.dataframe(
+                shown_drift_edge,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            if drift_features is not None and not drift_features.empty:
+                st.markdown("**2. Feature distribution drift**")
+                shown_feature_drift = drift_features.copy()
+                shown_feature_drift["_abs_shift"] = shown_feature_drift["Robust shift"].abs()
+                shown_feature_drift = shown_feature_drift.sort_values(
+                    ["Tier", "_abs_shift"],
+                    ascending=[True, False],
+                ).drop(columns=["_abs_shift"])
+                for col in [
+                    "Development median",
+                    "Holdout median",
+                    "Median delta",
+                    "Development IQR",
+                    "Holdout IQR",
+                    "Robust shift",
+                ]:
+                    if col in shown_feature_drift:
+                        shown_feature_drift[col] = shown_feature_drift[col].round(2)
+                st.dataframe(
+                    shown_feature_drift,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "Robust shift measures the median change relative to the pooled IQR. "
+                    "Values near 0 mean similar distributions; larger absolute values indicate stronger regime/feature drift."
+                )
+
+            if drift_corr is not None and not drift_corr.empty:
+                st.markdown("**3. Did the feature/edge relationship survive?**")
+                shown_corr = drift_corr.copy()
+                for col in [
+                    "Development Spearman",
+                    "Holdout Spearman",
+                    "Correlation delta",
+                ]:
+                    if col in shown_corr:
+                        shown_corr[col] = shown_corr[col].round(2)
+                st.dataframe(
+                    shown_corr,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "Spearman correlation is diagnostic only. A feature whose relationship with forward return changes sign "
+                    "between samples is a warning that the apparent development edge was regime-specific."
+                )
+
+            st.warning(
+                "Important: the older v2.3 window has now been inspected and is no longer an untouched holdout. "
+                "Use v2.4 only to form a NEW hypothesis. Any new rule must be frozen before testing on a third, unused historical window."
+            )
+
 st.subheader("Strategy family benchmark · v0.6")
 st.caption(
     "Four fixed reference strategies are compared on the same sequential future windows. "
@@ -2908,7 +3086,7 @@ snap3.metric("Volume / avg", f"{latest['volume_ratio']:.2f}x")
 signal_text = {1: "LONG", -1: "SHORT", 0: "FLAT"}[int(latest["signal"])]
 snap4.metric("Latest signal", signal_text)
 
-with st.expander("v2.3 logic and backtest assumptions"):
+with st.expander("v2.4 logic and backtest assumptions"):
     st.write(
         "Entry signals use EMA crosses plus RSI. Optional filters require price to be on the "
         "correct side of the trend EMA and/or volume to exceed its rolling average. "
