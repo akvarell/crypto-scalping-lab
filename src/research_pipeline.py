@@ -13,6 +13,10 @@ from src.frozen_continuation_holdout import (
     freeze_continuation_rule,
     run_frozen_continuation_holdout,
 )
+from src.frozen_close_location_holdout import (
+    freeze_close_location_rule,
+    run_frozen_close_location_holdout,
+)
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 
 
@@ -218,7 +222,7 @@ def run_research_pipeline(
     progress_callback: ProgressCallback | None = None,
     summary_callback: SummaryCallback | None = None,
 ) -> dict:
-    total_steps = 7
+    total_steps = 8
     timings = {}
     summaries = []
 
@@ -398,6 +402,69 @@ def run_research_pipeline(
         robustness_verdict,
     )
 
+    robust_close_location = False
+    if robustness_summary is not None and not robustness_summary.empty:
+        match = robustness_summary[
+            (robustness_summary["Feature"].astype(str) == "5m close location")
+            & (robustness_summary["Robust candidate"].astype(str) == "YES")
+        ]
+        robust_close_location = not match.empty
+
+    if robust_close_location:
+        frozen_close_location_rule = freeze_close_location_rule(
+            development_details
+        )
+        _notify(progress_callback, 8, total_steps, "Fourth Untouched Holdout")
+        started = time.perf_counter()
+        (
+            close_location_holdout_summary,
+            close_location_holdout_details,
+            fourth_window_periods,
+            fourth_window_universe_summary,
+            close_location_holdout_status,
+            close_location_holdout_verdict,
+        ) = run_frozen_close_location_holdout(
+            rule=frozen_close_location_rule,
+            horizon_days=120,
+            end_offset_days=510,
+            lookback_days=int(lookback_days),
+            forward_days=int(forward_days),
+            pool_size=int(pool_size),
+            select_top_n=int(select_top_n),
+            min_daily_turnover_usd=float(min_daily_turnover_usd),
+            fee_bps=float(fee_bps),
+            slippage_bps=float(slippage_bps),
+        )
+        timings["Fourth Untouched Holdout"] = time.perf_counter() - started
+    else:
+        frozen_close_location_rule = None
+        close_location_holdout_summary = pd.DataFrame()
+        close_location_holdout_details = pd.DataFrame()
+        fourth_window_periods = pd.DataFrame()
+        fourth_window_universe_summary = {}
+        close_location_holdout_status = "SKIPPED"
+        close_location_holdout_verdict = (
+            "v2.8 did not confirm 5m close location as a robust development feature, "
+            "so the fourth untouched window was not opened."
+        )
+
+    summaries.append(
+        {
+            "Step": 8,
+            "Test": "Fourth Untouched Holdout",
+            "Status": close_location_holdout_status,
+            "What became clear": close_location_holdout_verdict,
+        }
+    )
+    _notify_summary(
+        summary_callback,
+        8,
+        total_steps,
+        "Fourth Untouched Holdout",
+        close_location_holdout_status,
+        close_location_holdout_verdict,
+    )
+
     summary_table = pd.DataFrame(summaries)
     timing_table = pd.DataFrame(
         [
@@ -406,19 +473,34 @@ def run_research_pipeline(
         ]
     )
 
-    if robustness_status == "ROBUST_FEATURE_FOUND":
+    if close_location_holdout_status == "SURVIVED":
         next_allowed_test = (
-            "v2.8 found at least one feature that stayed directionally stable across time blocks, "
-            "multiple horizons and leave-one-symbol-out checks. Form ONE simple economic rule from "
-            "the robust candidate(s), freeze it, then test it on a fourth untouched 120-day window "
-            "ending 510 days before the frozen research anchor. Do not use the inspected v2.7 window "
-            "to choose the new rule."
+            "The v2.9 low-close-location rule survived the fourth untouched historical window. "
+            "Do not retune it. Next: forward paper validation on genuinely new incoming data with "
+            "the same universe selection, frozen entry filter, 10m exit and cost assumptions."
+        )
+    elif close_location_holdout_status == "LOW_SAMPLE":
+        next_allowed_test = (
+            "The fourth untouched window was too small for a strong conclusion. Keep the exact "
+            "v2.9 rule frozen and extend validation only with additional untouched time; do not "
+            "loosen the Q25 threshold after seeing this result."
+        )
+    elif close_location_holdout_status == "MIXED":
+        next_allowed_test = (
+            "v2.9 was mixed on the fourth untouched window. Do not call it validated and do not "
+            "retune it on that window. Preserve the screener and return to development-only "
+            "hypothesis work."
+        )
+    elif close_location_holdout_status == "FAILED":
+        next_allowed_test = (
+            "The v2.9 frozen close-location rule failed the fourth untouched window. Reject the "
+            "exact rule without retuning it. Preserve the universe screener and return to "
+            "development-only hypothesis discovery."
         )
     else:
         next_allowed_test = (
-            "v2.8 found no feature robust enough to justify another holdout. Do not open the fourth "
-            "untouched window and do not tune the old volume thresholds. Keep the universe screener "
-            "and add a different explanatory feature family on development data first."
+            "No fourth holdout was opened because v2.8 did not justify the v2.9 rule. Continue "
+            "development-only research before consuming another untouched window."
         )
 
     return {
@@ -447,6 +529,13 @@ def run_research_pipeline(
         "robustness_summary": robustness_summary,
         "robustness_verdict": robustness_verdict,
         "robustness_status": robustness_status,
+        "frozen_close_location_rule": frozen_close_location_rule,
+        "close_location_holdout_summary": close_location_holdout_summary,
+        "close_location_holdout_details": close_location_holdout_details,
+        "fourth_window_periods": fourth_window_periods,
+        "fourth_window_universe_summary": fourth_window_universe_summary,
+        "close_location_holdout_status": close_location_holdout_status,
+        "close_location_holdout_verdict": close_location_holdout_verdict,
         "stage_summaries": summary_table,
         "timings": timing_table,
         "next_allowed_test": next_allowed_test,
