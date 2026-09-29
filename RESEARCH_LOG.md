@@ -104,3 +104,62 @@ Do not tune the map.
 ### Next hypothesis
 Search genuinely different causal microstructure/context mechanisms:
 order-flow imbalance, breadth expansion/contraction, normalized cross-sectional dislocation, and microstructure reversal.
+
+
+---
+
+## 2026-09-29 — v3.3 Microstructure & Context Event Lab — PRE-RUN HYPOTHESIS
+
+### Why
+v3.2 showed that execution timing and holding horizon do not rescue the existing four event families. The next test must therefore change the economic mechanism rather than tune old thresholds.
+
+### Hypothesis before observing v3.3 results
+Short-horizon edge, if present, may be linked to causal microstructure/context state rather than breakout shape itself.
+
+Four mechanism classes are tested:
+
+1. Order-flow imbalance
+   - taker-buy imbalance
+   - change in taker imbalance
+   - volume × imbalance interaction
+   - average-trade-size × imbalance interaction
+
+2. Breadth / participation
+   - breadth expansion aligned with basket direction
+   - simultaneous new highs/lows across context symbols
+   - context-basket volume participation
+
+3. Cross-sectional dislocation
+   - relative return normalized by context-basket dispersion
+   - continuation and mean-reversion orientations tested separately
+
+4. Microstructure reversal
+   - 5m flow reversal against the completed relative move
+   - last-1m flow turn inside the completed 5m candle
+   - close-location deterioration against the completed relative move
+
+### Sampling / anti-selection design
+Observations are sampled deterministically once per hour for each selected trade symbol.
+Sampling does NOT depend on the magnitude of the feature being studied.
+This prevents a magnitude threshold from being tuned before the relationship screen.
+
+### Timing
+All 5m/context features are known only after the completed 5m candle.
+The modeled entry is the first available 1m open at/after known_time.
+The 1m flow-turn feature uses only 1m bars contained inside the already completed 5m candle.
+
+### Evaluation
+- development/research data only
+- LONG / SHORT separately
+- horizons: 3 / 5 / 10 / 15 / 30 minutes
+- continuous Strength -> signed future return Spearman
+- Q4-Q1 effect size is descriptive
+- 99% period-cluster bootstrap CI
+- individual-period direction consistency
+- leave-one-period-out stability
+- symbol concentration check
+
+### Promotion rule
+v3.3 can only produce MECHANISM_CANDIDATE_FOUND, not a validated strategy.
+No full-sample threshold may be frozen from v3.3.
+If a mechanism survives, the next stage is v3.4 Purged Walk-Forward, where thresholds are derived inside each training fold only.
