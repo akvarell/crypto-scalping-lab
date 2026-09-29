@@ -8,6 +8,10 @@ import pandas as pd
 from src.continuation_exhaustion import analyze_continuation_exhaustion
 from src.entry_quality_holdout import _evaluate_frozen_entries, run_frozen_1m_entry_holdout
 from src.feature_drift import compare_feature_drift
+from src.frozen_continuation_holdout import (
+    freeze_continuation_rule,
+    run_frozen_continuation_holdout,
+)
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 
 
@@ -213,7 +217,7 @@ def run_research_pipeline(
     progress_callback: ProgressCallback | None = None,
     summary_callback: SummaryCallback | None = None,
 ) -> dict:
-    total_steps = 5
+    total_steps = 6
     timings = {}
     summaries = []
 
@@ -322,6 +326,47 @@ def run_research_pipeline(
         continuation_verdict,
     )
 
+    frozen_continuation_rule = freeze_continuation_rule(development_details)
+
+    _notify(progress_callback, 6, total_steps, "Third Untouched Holdout")
+    started = time.perf_counter()
+    (
+        continuation_holdout_summary,
+        continuation_holdout_details,
+        third_window_periods,
+        third_window_universe_summary,
+        continuation_holdout_status,
+        continuation_holdout_verdict,
+    ) = run_frozen_continuation_holdout(
+        rule=frozen_continuation_rule,
+        horizon_days=120,
+        end_offset_days=390,
+        lookback_days=int(lookback_days),
+        forward_days=int(forward_days),
+        pool_size=int(pool_size),
+        select_top_n=int(select_top_n),
+        min_daily_turnover_usd=float(min_daily_turnover_usd),
+        fee_bps=float(fee_bps),
+        slippage_bps=float(slippage_bps),
+    )
+    timings["Third Untouched Holdout"] = time.perf_counter() - started
+    summaries.append(
+        {
+            "Step": 6,
+            "Test": "Third Untouched Holdout",
+            "Status": continuation_holdout_status,
+            "What became clear": continuation_holdout_verdict,
+        }
+    )
+    _notify_summary(
+        summary_callback,
+        6,
+        total_steps,
+        "Third Untouched Holdout",
+        continuation_holdout_status,
+        continuation_holdout_verdict,
+    )
+
     summary_table = pd.DataFrame(summaries)
     timing_table = pd.DataFrame(
         [
@@ -330,11 +375,24 @@ def run_research_pipeline(
         ]
     )
 
-    next_allowed_test = (
-        "Use v2.6 only to formulate ONE simple continuation-vs-exhaustion hypothesis. "
-        "Freeze that rule before opening the third untouched 120-day window ending 390 days "
-        "before the frozen research anchor. Do not retune it on the v2.3 window."
-    )
+    if continuation_holdout_status == "SURVIVED":
+        next_allowed_test = (
+            "The v2.7 rule survived the third untouched historical window. "
+            "Do not retune it. Next: forward paper validation on new incoming data with the same "
+            "universe logic, entry rule, 10m exit, fees and slippage."
+        )
+    elif continuation_holdout_status == "LOW_SAMPLE":
+        next_allowed_test = (
+            "The third untouched window did not provide enough events. Keep the exact rule frozen; "
+            "do not loosen thresholds based on this result. The next test should add more untouched "
+            "time without reusing development or either inspected holdout."
+        )
+    else:
+        next_allowed_test = (
+            "The exact v2.7 frozen continuation rule is not validated. Reject it without retuning "
+            "on the third window. Preserve the universe screener and return to hypothesis discovery "
+            "using only development data."
+        )
 
     return {
         "rolling_periods": rolling_periods,
@@ -352,6 +410,13 @@ def run_research_pipeline(
         "continuation_summary": continuation_summary,
         "continuation_relationships": continuation_relationships,
         "continuation_verdict": continuation_verdict,
+        "frozen_continuation_rule": frozen_continuation_rule,
+        "continuation_holdout_summary": continuation_holdout_summary,
+        "continuation_holdout_details": continuation_holdout_details,
+        "third_window_periods": third_window_periods,
+        "third_window_universe_summary": third_window_universe_summary,
+        "continuation_holdout_status": continuation_holdout_status,
+        "continuation_holdout_verdict": continuation_holdout_verdict,
         "stage_summaries": summary_table,
         "timings": timing_table,
         "next_allowed_test": next_allowed_test,
