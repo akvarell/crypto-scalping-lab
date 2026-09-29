@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.entry_quality_holdout import _evaluate_frozen_entries, _trimmed_mean
+from src.alt_basket_study import _alt_context, _cooldown, _events, _prepare_coin
+from src.dynamic_scalping import _fetch_5m
+from src.entry_quality_holdout import _trimmed_mean
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
+from src.scalping_edge_map import _add_1m_micro_features, _entry_index_confirmed, _fetch_1m
 
 
 RULE_NAME = "Frozen low-close-location v2.9"
@@ -73,6 +76,119 @@ def _apply_rule(details: pd.DataFrame, rule: dict) -> pd.DataFrame:
 
     close = pd.to_numeric(base["5m close location"], errors="coerce")
     return base[close <= float(rule["close_location_max"])].copy()
+
+
+def _evaluate_frozen_close_location(
+    rolling_details: pd.DataFrame,
+    *,
+    rule: dict,
+    forward_days: int,
+    fee_bps: float,
+    slippage_bps: float,
+) -> pd.DataFrame:
+    """Evaluate v2.9 efficiently: filter on 5m before downloading 1m data."""
+    cost_bps = 2.0 * (float(fee_bps) + float(slippage_bps))
+    threshold = float(rule["close_location_max"])
+    rows = []
+
+    for period, period_sel in rolling_details.groupby("Period", sort=True):
+        selection_time = pd.Timestamp(period_sel["Selection time"].iloc[0])
+        period_end = selection_time + pd.Timedelta(days=int(forward_days))
+
+        prepared: dict[str, pd.DataFrame] = {}
+        for symbol in period_sel["Symbol"].astype(str).tolist():
+            try:
+                market_5m = _fetch_5m(symbol, selection_time, period_end)
+            except Exception:
+                market_5m = pd.DataFrame()
+
+            if market_5m.empty or len(market_5m) < 200:
+                continue
+            prepared[symbol] = _prepare_coin(market_5m)
+
+        if len(prepared) < 3:
+            continue
+
+        contexts = _alt_context(prepared)
+
+        for symbol, five_minute in prepared.items():
+            ctx = contexts.get(symbol)
+            if ctx is None:
+                continue
+
+            events = _cooldown(_events(five_minute, ctx), minutes=60)
+            events = events[
+                (events["direction"] == 1)
+                & (events["alt_regime"] == "BULL")
+            ]
+            if events.empty:
+                continue
+
+            for event_time, event in events.iterrows():
+                if event_time not in five_minute.index:
+                    continue
+
+                candle = five_minute.loc[event_time]
+                candle_range = float(candle["high"]) - float(candle["low"])
+                if candle_range <= 0:
+                    continue
+
+                close_location = (
+                    (float(candle["close"]) - float(candle["low"]))
+                    / candle_range
+                )
+
+                # Critical optimization: v2.9's frozen filter is known from
+                # the completed 5m candle, so rejected events never download 1m.
+                if close_location > threshold:
+                    continue
+
+                known_time = pd.Timestamp(event_time) + pd.Timedelta(minutes=5)
+                micro_start = known_time - pd.Timedelta(minutes=30)
+                micro_end = known_time + pd.Timedelta(minutes=20)
+
+                try:
+                    one_minute = _fetch_1m(symbol, micro_start, micro_end)
+                except Exception:
+                    one_minute = pd.DataFrame()
+
+                if one_minute.empty or len(one_minute) < 35:
+                    continue
+
+                one_minute = _add_1m_micro_features(one_minute)
+                entry_i = _entry_index_confirmed(
+                    one_minute,
+                    known_time,
+                    1,
+                    confirm_window_minutes=3,
+                )
+                if entry_i is None:
+                    continue
+
+                exit_i = entry_i + 10 - 1
+                if exit_i >= len(one_minute):
+                    continue
+
+                entry_price = float(one_minute.iloc[entry_i]["open"])
+                exit_price = float(one_minute.iloc[exit_i]["close"])
+                if entry_price <= 0:
+                    continue
+
+                gross_bps = (exit_price / entry_price - 1.0) * 10_000.0
+                rows.append(
+                    {
+                        "Period": int(period),
+                        "Selection time": selection_time,
+                        "Symbol": symbol,
+                        "Event time": event_time,
+                        "Entry time": one_minute.index[entry_i],
+                        "5m close location": close_location,
+                        "Gross bps": gross_bps,
+                        "Net bps": gross_bps - cost_bps,
+                    }
+                )
+
+    return pd.DataFrame(rows)
 
 
 def _top_symbol_share(frame: pd.DataFrame) -> float:
@@ -239,20 +355,17 @@ def run_frozen_close_location_holdout(
     if rolling_details is None or rolling_details.empty:
         raise RuntimeError("Fourth untouched universe produced no selected symbols.")
 
-    _, all_details = _evaluate_frozen_entries(
+    frozen = _evaluate_frozen_close_location(
         rolling_details,
+        rule=rule,
         forward_days=int(forward_days),
         fee_bps=float(fee_bps),
         slippage_bps=float(slippage_bps),
     )
-
-    baseline = _baseline_events(all_details)
-    frozen = _apply_rule(all_details, rule)
     cost_bps = 2.0 * (float(fee_bps) + float(slippage_bps))
 
     summary = pd.DataFrame(
         [
-            _summary_row("Baseline LONG/BULL", baseline, cost_bps),
             _summary_row(RULE_NAME, frozen, cost_bps),
         ]
     )
