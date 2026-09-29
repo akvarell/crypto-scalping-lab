@@ -102,7 +102,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.8")
+st.title("Crypto Scalping Lab v2.9")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -548,14 +548,14 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Research Pipeline · v2.8")
-st.caption("One button runs the 7-step research chain. Only short conclusions are shown.")
+st.subheader("Research Pipeline · v2.9")
+st.caption("One button runs the 8-step research chain. Only short conclusions are shown.")
 
 run_pipeline = st.button(
     "Run Research Pipeline",
     type="primary",
     use_container_width=True,
-    key="run_research_pipeline_v28",
+    key="run_research_pipeline_v29",
 )
 
 if run_pipeline:
@@ -597,12 +597,12 @@ if run_pipeline:
             progress_callback=_pipeline_progress,
             summary_callback=_pipeline_summary,
         )
-        st.session_state["research_pipeline_result_v28"] = pipeline_result
+        st.session_state["research_pipeline_result_v29"] = pipeline_result
         pipeline_progress.progress(1.0, text="Research pipeline complete")
     except Exception as exc:
         st.error(f"Research Pipeline failed: {exc}")
 
-pipeline_result = st.session_state.get("research_pipeline_result_v28")
+pipeline_result = st.session_state.get("research_pipeline_result_v29")
 
 if pipeline_result is not None:
     stage_summaries = pipeline_result.get("stage_summaries")
