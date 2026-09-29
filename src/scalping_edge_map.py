@@ -85,7 +85,7 @@ def _fetch_1m_cached(
         ],
     )
     df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-    for col in ["open", "high", "low", "close", "volume", "quote_volume", "trades"]:
+    for col in ["open", "high", "low", "close", "volume", "quote_volume", "trades", "taker_base", "taker_quote"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return (
