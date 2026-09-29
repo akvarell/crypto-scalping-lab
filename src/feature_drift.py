@@ -40,6 +40,12 @@ def _top_symbol_share(frame: pd.DataFrame) -> float:
 
 
 def _safe_spearman(x: pd.Series, y: pd.Series) -> float:
+    """Spearman rank correlation without scipy.
+
+    Spearman is simply Pearson correlation of the ranked observations.
+    Using pandas rank() + ordinary Pearson avoids pulling scipy into the
+    Streamlit environment just for this diagnostic.
+    """
     pair = pd.concat(
         [
             pd.to_numeric(x, errors="coerce"),
@@ -47,11 +53,15 @@ def _safe_spearman(x: pd.Series, y: pd.Series) -> float:
         ],
         axis=1,
     ).dropna()
+
     if len(pair) < 8:
         return float("nan")
     if pair.iloc[:, 0].nunique() < 3 or pair.iloc[:, 1].nunique() < 3:
         return float("nan")
-    return float(pair.iloc[:, 0].corr(pair.iloc[:, 1], method="spearman"))
+
+    rank_x = pair.iloc[:, 0].rank(method="average")
+    rank_y = pair.iloc[:, 1].rank(method="average")
+    return float(rank_x.corr(rank_y))
 
 
 def _robust_shift(dev: pd.Series, hold: pd.Series) -> float:
