@@ -58,3 +58,18 @@ Next:
 v3.3 Microstructure & Context Event Lab.
 
 New work must be economically different from threshold tuning of the old event families.
+
+
+## 11. v3.3 discovery sampling
+v3.3 uses deterministic hourly observations rather than event-magnitude thresholds.
+
+Reason:
+the goal is to measure continuous microstructure/context relationships without first selecting extreme values of the same feature.
+
+Hourly spacing also reduces overlap between the longest 30-minute forward-return windows.
+
+## 12. v3.3 is discovery, not strategy validation
+Quartiles are used only to describe effect size.
+A full-development Q25/Q75 threshold must not become a trading rule.
+
+Any threshold used after v3.3 must be learned independently inside each training fold of a purged chronological walk-forward.
