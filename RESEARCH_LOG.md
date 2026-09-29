@@ -163,3 +163,85 @@ The 1m flow-turn feature uses only 1m bars contained inside the already complete
 v3.3 can only produce MECHANISM_CANDIDATE_FOUND, not a validated strategy.
 No full-sample threshold may be frozen from v3.3.
 If a mechanism survives, the next stage is v3.4 Purged Walk-Forward, where thresholds are derived inside each training fold only.
+
+
+---
+
+## 2026-09-29 — v3.3 Microstructure & Context Event Lab — RESULT
+
+### Dataset
+94526 continuous mechanism observations
+12 periods
+28 symbols
+
+Category observations:
+- Order flow: 39972
+- Breadth: 21331
+- Dislocation: 20140
+- Microstructure reversal: 13083
+
+### Result
+NO_MECHANISM_CANDIDATE
+
+No relationship passed the full predeclared discovery gate.
+
+Strongest descriptive relationship:
+- Relative-z reversion
+- SHORT
+- 15m
+- Spearman strength→return: +0.07
+- Q4-Q1 gross spread: +15.9 bps
+- Q4 gross median: +13.2 bps
+- positive periods: 8/12
+- 99% spread CI low: +2.0 bps
+
+### Interpretation
+This relationship did not pass because the predeclared gate required stronger overall monotonic association, including rho >= 0.08. The rho gate must NOT be relaxed after seeing the result.
+
+However, the direction, tail effect, period breadth and positive 99% spread CI justify a replication study on already-inspected historical eras before deciding whether the mechanism deserves purged walk-forward.
+
+---
+
+## 2026-09-29 — v3.3.1 Cross-Era Relative-z Replication — PRE-RUN HYPOTHESIS
+
+### Frozen descriptive mechanism
+Positive cross-sectional relative-z dislocation may mean-revert downward over the next 15 minutes.
+
+Exact orientation:
+- relative_z > 0 implies the coin has outperformed the context basket relative to basket dispersion
+- test SHORT reversion only
+- strength = positive relative_z
+- horizon = 15m
+- deterministic hourly sampling
+- immediate next-tradable 1m execution after the completed 5m candle
+
+### Replication eras
+Both are already inspected by prior research and therefore are NOT holdouts:
+- Era A: 90d ending 270d before the frozen anchor
+- Era B: 90d ending 390d before the frozen anchor
+
+No new untouched historical window will be opened.
+
+### Replication evidence
+For each era and pooled older data, report:
+- events / periods / symbols
+- Spearman strength→15m short return
+- Q4-Q1 gross spread
+- Q4 gross median
+- Q4 trimmed gross
+- positive periods
+- top-symbol share
+- 99% period-cluster spread CI
+
+### Replication gate
+Call REPLICATED only if:
+- both eras have positive Spearman
+- both eras have positive Q4-Q1 spread
+- both eras have positive Q4 median
+- both eras have >50% positive Q4 periods
+- pooled older sample has positive Q4 median
+- pooled older sample has 99% period-cluster spread CI low > 0
+- pooled Q4 top-symbol share <= 35%
+
+Even REPLICATED is not strategy validation because both eras are already inspected.
+A replicated mechanism may advance only to purged chronological walk-forward.
