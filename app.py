@@ -98,7 +98,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.4")
+st.title("Crypto Scalping Lab v2.4.1")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -2319,7 +2319,7 @@ if frozen_1m_summary is not None:
                     hide_index=True,
                 )
 
-st.subheader("Regime & Feature Drift Lab · v2.4")
+st.subheader("Regime & Feature Drift Lab · v2.4.1")
 st.caption(
     "v2.2 looked strong in the recent development sample, while v2.3 failed on an older sample. "
     "This block regenerates comparable events and measures what changed in the signal environment. "
