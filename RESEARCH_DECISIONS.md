@@ -88,3 +88,15 @@ The v3.3.1 eras were used by earlier research for other questions.
 They are inspected data.
 
 A positive replication result is evidence of mechanism persistence, not final out-of-sample validation.
+
+
+## 13. v3.3.1 relative-z mechanism rejected
+The exact positive-relative-z -> SHORT -> 15m mechanism failed cross-era replication.
+Do not rescue it by changing side, horizon, quartile or strength threshold on the inspected eras.
+
+## 14. v3.3.2 uses futures positioning as a genuinely different data source
+Funding and perpetual premium/basis are allowed because they encode derivatives positioning rather than another transformation of the same spot breakout event.
+
+Historical open-interest is excluded from the frozen historical study because the standard public historical OI endpoint does not provide a comparable long history.
+
+No threshold may be selected from full-sample v3.3.2 results.
