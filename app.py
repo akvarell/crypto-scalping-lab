@@ -23,7 +23,7 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
-from src.rolling_universe import run_rolling_universe_validation
+from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 from src.scalping_edge_map import run_scalping_edge_map
 from src.strategy import generate_signals
 from src.universe import build_universe_screener
@@ -98,7 +98,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.4.1")
+st.title("Crypto Scalping Lab v2.4.2")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -549,8 +549,9 @@ st.caption(
     "Long-distance validation of the screener itself. At each historical rebalance date, "
     "the candidate pool is rebuilt from historical trailing turnover at that date, then ranked "
     "with only the preceding lookback window and measured on the following period. "
-    "This removes the v1.0 current-volume look-ahead before we attach a trading strategy."
+    "Research windows are now anchored to a fixed UTC timestamp so reruns are reproducible."
 )
+st.caption(f"Frozen research anchor: {RESEARCH_ANCHOR_UTC.isoformat()}")
 
 ru1, ru2, ru3 = st.columns(3)
 with ru1:
@@ -608,6 +609,7 @@ with ru6:
     )
 
 rolling_signature = (
+    RESEARCH_ANCHOR_UTC.isoformat(),
     int(rolling_horizon),
     int(rolling_lookback),
     int(rolling_forward),
@@ -2319,7 +2321,7 @@ if frozen_1m_summary is not None:
                     hide_index=True,
                 )
 
-st.subheader("Regime & Feature Drift Lab · v2.4.1")
+st.subheader("Regime & Feature Drift Lab · v2.4.2")
 st.caption(
     "v2.2 looked strong in the recent development sample, while v2.3 failed on an older sample. "
     "This block regenerates comparable events and measures what changed in the signal environment. "
