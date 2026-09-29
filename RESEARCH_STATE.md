@@ -7,30 +7,30 @@ v3.3.1 Cross-Era Relative-z Replication
 READY_TO_RUN
 
 ## Last completed test
-Execution & Horizon Map v3.2
+Microstructure & Context Event Lab v3.3
 
 ## Last result
-- 45,148 execution observations
+- 94,526 continuous mechanism observations
 - 12 periods
 - 28 symbols
-- 4 event families
-- LONG / SHORT
-- Immediate / +1m delay
-- Horizons: 1 / 3 / 5 / 10 / 15 / 30 minutes
-- Costs: 12 / 20 / 30 bps
-- No timing/execution/horizon combination passed the strict 12 bps candidate screen.
+- Order flow: 39,972 observations
+- Breadth: 21,331
+- Dislocation: 20,140
+- Microstructure reversal: 13,083
+- Status: NO_MECHANISM_CANDIDATE
 
-Strongest descriptive combination:
-- Failed breakout reversal
+Strongest descriptive relationship:
+- Relative-z reversion
 - SHORT
-- +1m delay
-- 10m hold
-- Net avg: -7.8 bps
-- Net median: -9.7 bps
-- Positive periods: 2/12
-- 99% cluster CI low: -15.9 bps
+- 15m
+- Spearman: +0.07
+- Q4-Q1 gross spread: +15.9 bps
+- Q4 gross median: +13.2 bps
+- Positive periods: 8/12
+- 99% spread CI low: +2.0 bps
 
-This is diagnostic only and is NOT an edge.
+The predeclared rho >= 0.08 gate was not met.
+This is diagnostic evidence only, not a validated edge.
 
 ## What is rejected
 - Plain breakout continuation as a broad edge
@@ -97,4 +97,4 @@ Replication plan:
 Only a robust new candidate may advance to v3.4 Purged Walk-Forward.
 
 ## Latest research code commit
-17c9ff15c7af7bac0ddd19b646025fee9c21c3b5
+c4d60e2833caf61aef7643f070c36e88a39be5b4
