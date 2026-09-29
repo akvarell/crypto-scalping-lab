@@ -555,7 +555,7 @@ run_pipeline = st.button(
     "Run Research Pipeline",
     type="primary",
     use_container_width=True,
-    key="run_research_pipeline_v27",
+    key="run_research_pipeline_v271",
 )
 
 if run_pipeline:
@@ -597,12 +597,12 @@ if run_pipeline:
             progress_callback=_pipeline_progress,
             summary_callback=_pipeline_summary,
         )
-        st.session_state["research_pipeline_result_v27"] = pipeline_result
+        st.session_state["research_pipeline_result_v271"] = pipeline_result
         pipeline_progress.progress(1.0, text="Research pipeline complete")
     except Exception as exc:
         st.error(f"Research Pipeline failed: {exc}")
 
-pipeline_result = st.session_state.get("research_pipeline_result_v27")
+pipeline_result = st.session_state.get("research_pipeline_result_v271")
 
 if pipeline_result is not None:
     stage_summaries = pipeline_result.get("stage_summaries")
