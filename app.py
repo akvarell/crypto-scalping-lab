@@ -25,7 +25,9 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
-from src.research_reset_v3 import run_research_reset_v3
+from src.event_dataset_v3 import build_event_dataset_v3
+from src.research_universe_v3 import build_research_universe_v3
+from src.validation_v3 import audit_event_dataset_v3, cost_stress_v3, feature_stability_v3
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 from src.scalping_edge_map import _fetch_1m_cached, run_scalping_edge_map
 from src.strategy import generate_signals
@@ -101,7 +103,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v3.0")
+st.title("Crypto Scalping Lab v3.0.1")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -547,46 +549,40 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Research Reset · v3.0")
+st.subheader("Research Reset · v3.0.1")
 st.caption(
-    "Clean causal research pipeline: historical trade/context universe → 48h-warmup events → "
-    "timing audit → 12/20/30 bps cost stress → side-specific period-cluster feature stability. "
-    "No new historical holdout is opened."
+    "Memory-safe causal audit. Step 2 is checkpointed period-by-period, so Streamlit never "
+    "has to keep the full 90-day event build in one long process."
 )
 
 run_v3 = st.button(
     "Run v3 Research Audit",
     type="primary",
     use_container_width=True,
-    key="run_research_reset_v30",
+    key="run_research_reset_v301",
 )
 
+V3_PREFIX = "research_reset_v301"
+
 if run_v3:
-    st.session_state.pop("research_reset_v30", None)
-    progress_v3 = st.progress(0.0, text="Preparing v3 audit...")
-    live_v3 = st.empty()
+    for key in [
+        f"{V3_PREFIX}_result",
+        f"{V3_PREFIX}_phase",
+        f"{V3_PREFIX}_universe",
+        f"{V3_PREFIX}_periods",
+        f"{V3_PREFIX}_period_index",
+        f"{V3_PREFIX}_event_chunks",
+        f"{V3_PREFIX}_stage_rows",
+    ]:
+        st.session_state.pop(key, None)
+    st.session_state[f"{V3_PREFIX}_phase"] = "universe"
 
-    def _v3_progress(step: int, total: int, label: str) -> None:
-        progress_v3.progress(
-            max(0.0, min(1.0, (step - 1) / total)),
-            text=f"{step}/{total} · {label}",
-        )
+v3_phase = st.session_state.get(f"{V3_PREFIX}_phase")
 
-    def _v3_summary(
-        step: int,
-        total: int,
-        label: str,
-        status: str,
-        message: str,
-    ) -> None:
-        progress_v3.progress(
-            max(0.0, min(1.0, step / total)),
-            text=f"{step}/{total} · {label} complete",
-        )
-        live_v3.info(f"{label} · {status}\n\n{message}")
-
+if v3_phase == "universe":
+    progress_v3 = st.progress(0.0, text="1/5 · Building historical universe")
     try:
-        v3_result = run_research_reset_v3(
+        periods_v3, universe_v3, universe_summary_v3 = build_research_universe_v3(
             horizon_days=90,
             lookback_days=14,
             forward_days=7,
@@ -594,27 +590,230 @@ if run_v3:
             trade_top_n=5,
             context_top_n=15,
             min_daily_turnover_usd=5_000_000.0,
-            progress_callback=_v3_progress,
-            summary_callback=_v3_summary,
+            end_offset_days=0,
+            as_of=RESEARCH_ANCHOR_UTC,
         )
 
-        st.session_state["research_reset_v30"] = {
-            "stage_summaries": v3_result["stage_summaries"],
-            "next_step": v3_result["next_step"],
-        }
+        period_ids_v3 = sorted(universe_v3["Period"].unique().tolist())
+        universe_status_v3 = "PASS_WITH_CAVEAT" if len(periods_v3) >= 8 else "REVIEW"
+        universe_message_v3 = (
+            f"Built {len(periods_v3)} reproducible periods with top-5 trade symbols and "
+            f"top-15 context symbols. Trade and regime universes are separated. "
+            f"Survivorship status: {universe_summary_v3['survivorship_status']}. "
+            "Historical delisted symbols are still not reconstructed."
+        )
 
-        del v3_result
-        _fetch_1m_cached.cache_clear()
+        st.session_state[f"{V3_PREFIX}_universe"] = universe_v3
+        st.session_state[f"{V3_PREFIX}_periods"] = period_ids_v3
+        st.session_state[f"{V3_PREFIX}_period_index"] = 0
+        st.session_state[f"{V3_PREFIX}_event_chunks"] = []
+        st.session_state[f"{V3_PREFIX}_stage_rows"] = [
+            {
+                "Step": 1,
+                "Test": "v3 Historical Universe",
+                "Status": universe_status_v3,
+                "What became clear": universe_message_v3,
+            }
+        ]
+        st.session_state[f"{V3_PREFIX}_phase"] = "events"
+        progress_v3.progress(0.2, text="1/5 · Historical universe complete")
         gc.collect()
-        progress_v3.progress(1.0, text="v3 research audit complete")
+        st.rerun()
     except Exception as exc:
-        _fetch_1m_cached.cache_clear()
-        gc.collect()
-        st.error(f"v3 Research Audit failed: {exc}")
+        st.session_state[f"{V3_PREFIX}_phase"] = None
+        st.error(f"v3 universe build failed: {exc}")
 
-v3_result = st.session_state.get("research_reset_v30")
+elif v3_phase == "events":
+    universe_v3 = st.session_state.get(f"{V3_PREFIX}_universe")
+    period_ids_v3 = st.session_state.get(f"{V3_PREFIX}_periods", [])
+    period_index_v3 = int(st.session_state.get(f"{V3_PREFIX}_period_index", 0))
+    chunks_v3 = st.session_state.get(f"{V3_PREFIX}_event_chunks", [])
+
+    if universe_v3 is None or not period_ids_v3:
+        st.session_state[f"{V3_PREFIX}_phase"] = None
+        st.error("v3 checkpoint is missing. Run the audit again.")
+    elif period_index_v3 < len(period_ids_v3):
+        current_period_v3 = period_ids_v3[period_index_v3]
+        progress_v3 = st.progress(
+            0.2 + 0.2 * (period_index_v3 / len(period_ids_v3)),
+            text=(
+                f"2/5 · Causal Event Dataset · period "
+                f"{period_index_v3 + 1}/{len(period_ids_v3)}"
+            ),
+        )
+
+        try:
+            period_frame_v3 = universe_v3[
+                universe_v3["Period"] == current_period_v3
+            ].copy()
+
+            chunk_v3 = build_event_dataset_v3(
+                period_frame_v3,
+                forward_days=7,
+                warmup_hours=48,
+            )
+
+            if chunk_v3 is not None and not chunk_v3.empty:
+                chunks_v3.append(chunk_v3)
+
+            st.session_state[f"{V3_PREFIX}_event_chunks"] = chunks_v3
+            st.session_state[f"{V3_PREFIX}_period_index"] = period_index_v3 + 1
+
+            _fetch_1m_cached.cache_clear()
+            gc.collect()
+            st.rerun()
+        except Exception as exc:
+            _fetch_1m_cached.cache_clear()
+            gc.collect()
+            st.error(
+                f"v3 event build failed on period "
+                f"{period_index_v3 + 1}/{len(period_ids_v3)}: {exc}"
+            )
+    else:
+        events_v3 = (
+            pd.concat(chunks_v3, ignore_index=True)
+            if chunks_v3
+            else pd.DataFrame()
+        )
+
+        if events_v3.empty:
+            st.session_state[f"{V3_PREFIX}_phase"] = None
+            st.error("v3 causal event dataset returned no events.")
+        else:
+            event_status_v3 = (
+                "PASS"
+                if len(events_v3) >= 100
+                and events_v3["Period"].nunique() >= 8
+                and events_v3["Symbol"].nunique() >= 8
+                else "REVIEW"
+            )
+            event_message_v3 = (
+                f"Built {len(events_v3)} causal breakout events across "
+                f"{events_v3['Period'].nunique()} periods and "
+                f"{events_v3['Symbol'].nunique()} symbols. 5m indicators use 48h warm-up, "
+                "volume baselines use prior candles only, and entry is after one completed "
+                "1m decision candle."
+            )
+
+            rows_v3 = list(st.session_state.get(f"{V3_PREFIX}_stage_rows", []))
+            rows_v3.append(
+                {
+                    "Step": 2,
+                    "Test": "Causal Event Dataset",
+                    "Status": event_status_v3,
+                    "What became clear": event_message_v3,
+                }
+            )
+
+            progress_v3 = st.progress(0.4, text="3/5 · Timing & Data Audit")
+            audit_v3, audit_verdict_v3 = audit_event_dataset_v3(
+                universe_v3,
+                events_v3,
+            )
+            hard_fail_v3 = bool(
+                (audit_v3["Status"].astype(str) == "FAIL").any()
+            )
+            rows_v3.append(
+                {
+                    "Step": 3,
+                    "Test": "Timing & Data Audit",
+                    "Status": "FAILED" if hard_fail_v3 else "PASS",
+                    "What became clear": audit_verdict_v3,
+                }
+            )
+
+            progress_v3.progress(0.6, text="4/5 · Cost Stress")
+            cost_v3 = cost_stress_v3(events_v3)
+            base12_v3 = cost_v3[
+                (cost_v3["Side"] == "ALL")
+                & (cost_v3["Round-trip cost bps"] == 12.0)
+            ]
+            if base12_v3.empty:
+                cost_status_v3 = "REVIEW"
+                cost_message_v3 = "Could not calculate the 12 bps broad-event baseline."
+            else:
+                row12_v3 = base12_v3.iloc[0]
+                net12_v3 = float(row12_v3["Net avg bps"])
+                med12_v3 = float(row12_v3["Net median bps"])
+                cost_status_v3 = (
+                    "BASELINE_POSITIVE"
+                    if net12_v3 > 0 and med12_v3 > 0
+                    else "BASELINE_NEGATIVE"
+                )
+                cost_message_v3 = (
+                    f"Broad unfiltered events at 12 bps: net avg {net12_v3:+.1f} bps, "
+                    f"net median {med12_v3:+.1f} bps, positive periods "
+                    f"{row12_v3['Positive periods']}. 20/30 bps are also stress-tested internally."
+                )
+            rows_v3.append(
+                {
+                    "Step": 4,
+                    "Test": "Cost Stress",
+                    "Status": cost_status_v3,
+                    "What became clear": cost_message_v3,
+                }
+            )
+
+            progress_v3.progress(0.8, text="5/5 · Period-Cluster Feature Stability")
+            feature_v3, feature_verdict_v3 = feature_stability_v3(events_v3)
+            candidate_count_v3 = (
+                int((feature_v3["Candidate feature"].astype(str) == "YES").sum())
+                if feature_v3 is not None and not feature_v3.empty
+                else 0
+            )
+            feature_status_v3 = (
+                "CANDIDATE_FOUND" if candidate_count_v3 > 0 else "NO_CANDIDATE"
+            )
+            rows_v3.append(
+                {
+                    "Step": 5,
+                    "Test": "Period-Cluster Feature Stability",
+                    "Status": feature_status_v3,
+                    "What became clear": feature_verdict_v3,
+                }
+            )
+
+            if hard_fail_v3:
+                next_v3 = (
+                    "Stop and fix the timing/data audit before strategy research."
+                )
+            elif feature_status_v3 == "CANDIDATE_FOUND":
+                next_v3 = (
+                    "Next build v3.1 Purged Walk-Forward. Do not open another fixed historical "
+                    "holdout. Thresholds must be derived only inside past training blocks, then "
+                    "tested on the next chronological block with 12/20/30 bps costs and portfolio limits."
+                )
+            else:
+                next_v3 = (
+                    "No feature is stable enough yet. Do not open another holdout. "
+                    "Add a different development-only feature family or simplify the event definition."
+                )
+
+            st.session_state[f"{V3_PREFIX}_result"] = {
+                "stage_summaries": pd.DataFrame(rows_v3),
+                "next_step": next_v3,
+            }
+            st.session_state[f"{V3_PREFIX}_phase"] = "done"
+
+            for key in [
+                f"{V3_PREFIX}_universe",
+                f"{V3_PREFIX}_periods",
+                f"{V3_PREFIX}_period_index",
+                f"{V3_PREFIX}_event_chunks",
+                f"{V3_PREFIX}_stage_rows",
+            ]:
+                st.session_state.pop(key, None)
+
+            del events_v3, chunks_v3, universe_v3
+            _fetch_1m_cached.cache_clear()
+            gc.collect()
+            progress_v3.progress(1.0, text="v3 research audit complete")
+            st.rerun()
+
+v3_result = st.session_state.get(f"{V3_PREFIX}_result")
 
 if v3_result is not None:
+    st.success("v3 research audit complete")
     st.markdown("**Короткий висновок**")
     for _, row in v3_result["stage_summaries"].iterrows():
         st.write(
