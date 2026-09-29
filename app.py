@@ -99,7 +99,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.5")
+st.title("Crypto Scalping Lab v2.5.1")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -545,36 +545,24 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Automated Research Pipeline · v2.5")
-st.caption(
-    "One button runs the current research protocol in the correct order: "
-    "Rolling Universe → frozen-format development entry study → frozen 1m holdout → regime/feature drift. "
-    "After every completed step the app writes a short plain-text conclusion. "
-    "The pipeline stops after diagnostics instead of automatically tuning on the inspected holdout."
-)
-
-rp1, rp2, rp3, rp4 = st.columns(4)
-rp1.metric("Development window", "90 days")
-rp2.metric("Frozen holdout", "120 days")
-rp3.metric("Costs", "4 + 2 bps / side")
-rp4.metric("Research anchor", "2026-09-29 UTC")
+st.subheader("Research Pipeline · v2.5.1")
+st.caption("One button runs the current research chain. Only short conclusions are shown.")
 
 run_pipeline = st.button(
     "Run Research Pipeline",
     type="primary",
     use_container_width=True,
-    key="run_research_pipeline_v25",
+    key="run_research_pipeline_v251",
 )
 
 if run_pipeline:
-    pipeline_progress = st.progress(0.0, text="Preparing research pipeline...")
-    live_summary_box = st.container()
+    pipeline_progress = st.progress(0.0, text="Preparing...")
+    latest_summary = st.empty()
 
     def _pipeline_progress(step: int, total: int, label: str) -> None:
-        completed_before = max(0.0, min(1.0, (step - 1) / total))
         pipeline_progress.progress(
-            completed_before,
-            text=f"Step {step}/{total}: {label}...",
+            max(0.0, min(1.0, (step - 1) / total)),
+            text=f"{step}/{total} · {label}",
         )
 
     def _pipeline_summary(
@@ -586,11 +574,9 @@ if run_pipeline:
     ) -> None:
         pipeline_progress.progress(
             max(0.0, min(1.0, step / total)),
-            text=f"Step {step}/{total}: {label} complete",
+            text=f"{step}/{total} · {label} complete",
         )
-        with live_summary_box:
-            st.markdown(f"**Step {step}/{total} · {label} · {status}**")
-            st.write(message)
+        latest_summary.info(f"{label} · {status}\n\n{message}")
 
     try:
         pipeline_result = run_research_pipeline(
@@ -616,60 +602,16 @@ if run_pipeline:
 pipeline_result = st.session_state.get("research_pipeline_result")
 
 if pipeline_result is not None:
-    st.markdown("### Research Pipeline summary")
-    st.caption(
-        f"Frozen research anchor: {pipeline_result.get('research_anchor', '')}. "
-        "These summaries are generated from the completed tests, not from an optimizer."
-    )
-
     stage_summaries = pipeline_result.get("stage_summaries")
     if stage_summaries is not None and not stage_summaries.empty:
+        st.markdown("**Короткий висновок**")
         for _, row in stage_summaries.iterrows():
-            st.markdown(
-                f"**{int(row['Step'])}. {row['Test']} · {row['Status']}**"
-            )
-            st.write(str(row["What became clear"]))
-
-    timings = pipeline_result.get("timings")
-    if timings is not None and not timings.empty:
-        shown_timings = timings.copy()
-        shown_timings["Seconds"] = shown_timings["Seconds"].round(1)
-        shown_timings["Minutes"] = shown_timings["Minutes"].round(2)
-        with st.expander("Execution time by test"):
-            st.dataframe(
-                shown_timings,
-                use_container_width=True,
-                hide_index=True,
+            st.write(
+                f"{row['Test']} · {row['Status']}: {row['What became clear']}"
             )
 
-    st.markdown("**What happens next**")
+    st.markdown("**Далі**")
     st.write(str(pipeline_result.get("next_allowed_test", "")))
-
-    with st.expander("Pipeline result tables"):
-        st.markdown("**Development entry study**")
-        st.dataframe(
-            pipeline_result["development_summary"].round(2),
-            use_container_width=True,
-            hide_index=True,
-        )
-        st.markdown("**Frozen 1m holdout**")
-        st.dataframe(
-            pipeline_result["holdout_summary"].round(2),
-            use_container_width=True,
-            hide_index=True,
-        )
-        st.markdown("**Feature drift**")
-        st.dataframe(
-            pipeline_result["feature_drift"].round(2),
-            use_container_width=True,
-            hide_index=True,
-        )
-        st.markdown("**Feature → return relationship**")
-        st.dataframe(
-            pipeline_result["feature_corr"].round(2),
-            use_container_width=True,
-            hide_index=True,
-        )
 
 st.subheader("Rolling Universe Validation · v1.1")
 st.caption(
