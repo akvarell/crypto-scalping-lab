@@ -237,6 +237,31 @@ def _forward_return_bps(
     return float(direction) * (exit_price / entry - 1.0) * 10_000.0
 
 
+def _merge_micro_windows(
+    event_times: list[pd.Timestamp],
+) -> list[dict]:
+    """Merge overlapping 1m event windows to reduce Binance requests."""
+    windows = []
+    for event_time in sorted(pd.Timestamp(ts) for ts in event_times):
+        known_time = event_time + pd.Timedelta(minutes=5)
+        start = known_time - pd.Timedelta(minutes=30)
+        end = known_time + pd.Timedelta(minutes=20)
+
+        if not windows or start > windows[-1]["end"]:
+            windows.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "events": [event_time],
+                }
+            )
+        else:
+            windows[-1]["end"] = max(windows[-1]["end"], end)
+            windows[-1]["events"].append(event_time)
+
+    return windows
+
+
 def build_event_dataset_v3(
     universe_details: pd.DataFrame,
     *,
@@ -322,76 +347,102 @@ def build_event_dataset_v3(
             if events.empty:
                 continue
 
-            for event_time, event in events.iterrows():
-                known_time = pd.Timestamp(event_time) + pd.Timedelta(minutes=5)
-                micro_start = known_time - pd.Timedelta(minutes=30)
-                micro_end = known_time + pd.Timedelta(minutes=20)
+            event_lookup = {
+                pd.Timestamp(ts): row
+                for ts, row in events.iterrows()
+            }
 
+            for batch in _merge_micro_windows(list(event_lookup)):
                 try:
-                    one_minute = _fetch_1m(symbol, micro_start, micro_end)
+                    one_minute_batch = _fetch_1m(
+                        symbol,
+                        batch["start"],
+                        batch["end"],
+                    )
                 except Exception:
-                    one_minute = pd.DataFrame()
+                    one_minute_batch = pd.DataFrame()
 
-                if one_minute.empty or len(one_minute) < 35:
+                if one_minute_batch.empty:
                     continue
 
-                decision_i = int(one_minute.index.searchsorted(known_time, side="left"))
-                if decision_i >= len(one_minute):
-                    continue
+                for event_time in batch["events"]:
+                    event = event_lookup[event_time]
+                    known_time = pd.Timestamp(event_time) + pd.Timedelta(minutes=5)
 
-                # The bar at decision_i must complete before its features are known.
-                entry_i = decision_i + 1
-                if entry_i >= len(one_minute):
-                    continue
+                    micro_start = known_time - pd.Timedelta(minutes=30)
+                    micro_end = known_time + pd.Timedelta(minutes=20)
+                    one_minute = one_minute_batch[
+                        (one_minute_batch.index >= micro_start)
+                        & (one_minute_batch.index < micro_end)
+                    ]
 
-                features_1m = _one_minute_features(one_minute, decision_i)
+                    if one_minute.empty or len(one_minute) < 35:
+                        continue
 
-                five_row = coin.loc[event_time]
-                candle_range = float(five_row["high"]) - float(five_row["low"])
-                close_location_5m = (
-                    (float(five_row["close"]) - float(five_row["low"])) / candle_range
-                    if candle_range > 0
-                    else float("nan")
-                )
+                    decision_i = int(
+                        one_minute.index.searchsorted(known_time, side="left")
+                    )
+                    if decision_i >= len(one_minute):
+                        continue
 
-                record = {
-                    "Period": int(period),
-                    "Selection time": selection_time,
-                    "Symbol": symbol,
-                    "Event time": event_time,
-                    "Known time": known_time,
-                    "Entry time": one_minute.index[entry_i],
-                    "Side": "LONG" if int(event["direction"]) == 1 else "SHORT",
-                    "Direction": int(event["direction"]),
-                    "Breadth": float(event["breadth"]),
-                    "Basket 15m return %": float(event["basket_ret_15m"]) * 100.0,
-                    "Basket 60m return %": float(event["basket_ret_60m"]) * 100.0,
-                    "Basket volume ratio": float(event["basket_volume_ratio"]),
-                    "5m volume ratio prior20": float(event["coin_volume_ratio"]),
-                    "5m trades ratio prior20": float(event.get("coin_trades_ratio", float("nan"))),
-                    "5m range / ATR": float(event["range_atr"]),
-                    "5m relative move / ATR": float(event["relative_move_atr"]),
-                    "5m ATR %": float(event["atr_pct"]) * 100.0,
-                    "5m RSI": float(event["rsi"]),
-                    "5m close location": close_location_5m,
-                }
+                    # The bar at decision_i must complete before its features are known.
+                    entry_i = decision_i + 1
+                    if entry_i >= len(one_minute):
+                        continue
 
-                if "5m taker buy ratio" in event:
-                    record["5m taker buy ratio"] = float(event["5m taker buy ratio"])
-                    record["5m taker buy ratio delta"] = float(
-                        event["5m taker buy ratio delta"]
+                    features_1m = _one_minute_features(one_minute, decision_i)
+
+                    five_row = coin.loc[event_time]
+                    candle_range = float(five_row["high"]) - float(five_row["low"])
+                    close_location_5m = (
+                        (float(five_row["close"]) - float(five_row["low"]))
+                        / candle_range
+                        if candle_range > 0
+                        else float("nan")
                     )
 
-                record.update(features_1m)
+                    record = {
+                        "Period": int(period),
+                        "Selection time": selection_time,
+                        "Symbol": symbol,
+                        "Event time": event_time,
+                        "Known time": known_time,
+                        "Entry time": one_minute.index[entry_i],
+                        "Side": "LONG" if int(event["direction"]) == 1 else "SHORT",
+                        "Direction": int(event["direction"]),
+                        "Breadth": float(event["breadth"]),
+                        "Basket 15m return %": float(event["basket_ret_15m"]) * 100.0,
+                        "Basket 60m return %": float(event["basket_ret_60m"]) * 100.0,
+                        "Basket volume ratio": float(event["basket_volume_ratio"]),
+                        "5m volume ratio prior20": float(event["coin_volume_ratio"]),
+                        "5m trades ratio prior20": float(
+                            event.get("coin_trades_ratio", float("nan"))
+                        ),
+                        "5m range / ATR": float(event["range_atr"]),
+                        "5m relative move / ATR": float(event["relative_move_atr"]),
+                        "5m ATR %": float(event["atr_pct"]) * 100.0,
+                        "5m RSI": float(event["rsi"]),
+                        "5m close location": close_location_5m,
+                    }
 
-                for horizon in FORWARD_HORIZONS:
-                    record[f"Gross {horizon}m bps"] = _forward_return_bps(
-                        one_minute,
-                        entry_i,
-                        int(event["direction"]),
-                        horizon,
-                    )
+                    if "5m taker buy ratio" in event:
+                        record["5m taker buy ratio"] = float(
+                            event["5m taker buy ratio"]
+                        )
+                        record["5m taker buy ratio delta"] = float(
+                            event["5m taker buy ratio delta"]
+                        )
 
-                rows.append(record)
+                    record.update(features_1m)
+
+                    for horizon in FORWARD_HORIZONS:
+                        record[f"Gross {horizon}m bps"] = _forward_return_bps(
+                            one_minute,
+                            entry_i,
+                            int(event["direction"]),
+                            horizon,
+                        )
+
+                    rows.append(record)
 
     return pd.DataFrame(rows)
