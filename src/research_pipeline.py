@@ -6,6 +6,7 @@ from typing import Callable
 import pandas as pd
 
 from src.continuation_exhaustion import analyze_continuation_exhaustion
+from src.development_robustness import analyze_development_robustness
 from src.entry_quality_holdout import _evaluate_frozen_entries, run_frozen_1m_entry_holdout
 from src.feature_drift import compare_feature_drift
 from src.frozen_continuation_holdout import (
@@ -217,7 +218,7 @@ def run_research_pipeline(
     progress_callback: ProgressCallback | None = None,
     summary_callback: SummaryCallback | None = None,
 ) -> dict:
-    total_steps = 6
+    total_steps = 7
     timings = {}
     summaries = []
 
@@ -328,7 +329,7 @@ def run_research_pipeline(
 
     frozen_continuation_rule = freeze_continuation_rule(development_details)
 
-    _notify(progress_callback, 6, total_steps, "Third Untouched Holdout")
+    _notify(progress_callback, 6, total_steps, "v2.7 Frozen Holdout")
     started = time.perf_counter()
     (
         continuation_holdout_summary,
@@ -353,7 +354,7 @@ def run_research_pipeline(
     summaries.append(
         {
             "Step": 6,
-            "Test": "Third Untouched Holdout",
+            "Test": "v2.7 Frozen Holdout",
             "Status": continuation_holdout_status,
             "What became clear": continuation_holdout_verdict,
         }
@@ -362,9 +363,39 @@ def run_research_pipeline(
         summary_callback,
         6,
         total_steps,
-        "Third Untouched Holdout",
+        "v2.7 Frozen Holdout",
         continuation_holdout_status,
         continuation_holdout_verdict,
+    )
+
+    _notify(progress_callback, 7, total_steps, "Development Robustness")
+    started = time.perf_counter()
+    robustness_summary, robustness_verdict = analyze_development_robustness(
+        development_details
+    )
+    timings["Development Robustness"] = time.perf_counter() - started
+
+    robust_count = int(
+        (robustness_summary["Robust candidate"].astype(str) == "YES").sum()
+    )
+    robustness_status = (
+        "ROBUST_FEATURE_FOUND" if robust_count > 0 else "NO_ROBUST_FEATURE"
+    )
+    summaries.append(
+        {
+            "Step": 7,
+            "Test": "Development Robustness",
+            "Status": robustness_status,
+            "What became clear": robustness_verdict,
+        }
+    )
+    _notify_summary(
+        summary_callback,
+        7,
+        total_steps,
+        "Development Robustness",
+        robustness_status,
+        robustness_verdict,
     )
 
     summary_table = pd.DataFrame(summaries)
@@ -375,23 +406,19 @@ def run_research_pipeline(
         ]
     )
 
-    if continuation_holdout_status == "SURVIVED":
+    if robustness_status == "ROBUST_FEATURE_FOUND":
         next_allowed_test = (
-            "The v2.7 rule survived the third untouched historical window. "
-            "Do not retune it. Next: forward paper validation on new incoming data with the same "
-            "universe logic, entry rule, 10m exit, fees and slippage."
-        )
-    elif continuation_holdout_status == "LOW_SAMPLE":
-        next_allowed_test = (
-            "The third untouched window did not provide enough events. Keep the exact rule frozen; "
-            "do not loosen thresholds based on this result. The next test should add more untouched "
-            "time without reusing development or either inspected holdout."
+            "v2.8 found at least one feature that stayed directionally stable across time blocks, "
+            "multiple horizons and leave-one-symbol-out checks. Form ONE simple economic rule from "
+            "the robust candidate(s), freeze it, then test it on a fourth untouched 120-day window "
+            "ending 510 days before the frozen research anchor. Do not use the inspected v2.7 window "
+            "to choose the new rule."
         )
     else:
         next_allowed_test = (
-            "The exact v2.7 frozen continuation rule is not validated. Reject it without retuning "
-            "on the third window. Preserve the universe screener and return to hypothesis discovery "
-            "using only development data."
+            "v2.8 found no feature robust enough to justify another holdout. Do not open the fourth "
+            "untouched window and do not tune the old volume thresholds. Keep the universe screener "
+            "and add a different explanatory feature family on development data first."
         )
 
     return {
@@ -417,6 +444,9 @@ def run_research_pipeline(
         "third_window_universe_summary": third_window_universe_summary,
         "continuation_holdout_status": continuation_holdout_status,
         "continuation_holdout_verdict": continuation_holdout_verdict,
+        "robustness_summary": robustness_summary,
+        "robustness_verdict": robustness_verdict,
+        "robustness_status": robustness_status,
         "stage_summaries": summary_table,
         "timings": timing_table,
         "next_allowed_test": next_allowed_test,
