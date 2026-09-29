@@ -23,7 +23,10 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
-from src.research_pipeline import run_research_pipeline
+import importlib
+import src.research_pipeline as research_pipeline_module
+research_pipeline_module = importlib.reload(research_pipeline_module)
+run_research_pipeline = research_pipeline_module.run_research_pipeline
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 from src.scalping_edge_map import run_scalping_edge_map
 from src.strategy import generate_signals
@@ -99,7 +102,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v2.7")
+st.title("Crypto Scalping Lab v2.7.1")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -545,7 +548,7 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Research Pipeline · v2.7")
+st.subheader("Research Pipeline · v2.7.1")
 st.caption("One button runs the 6-step research chain. Only short conclusions are shown.")
 
 run_pipeline = st.button(
