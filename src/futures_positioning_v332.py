@@ -337,7 +337,7 @@ def _fetch_premium_5m(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd
 
     if frame.empty:
         frame = _download_archive_frame(
-            "premiumIndexKlines",
+            "premiumPriceKlines",
             symbol,
             start,
             end,
@@ -365,6 +365,29 @@ def _fetch_futures_5m(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd
             interval="5m",
         )
     return frame
+
+
+def _fetch_archive_price_type(
+    data_type: str,
+    symbol: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    return _download_archive_frame(
+        data_type,
+        symbol,
+        start,
+        end,
+        interval="5m",
+    )
+
+
+def _fetch_mark_5m(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    return _fetch_archive_price_type("markPriceKlines", symbol, start, end)
+
+
+def _fetch_index_5m(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    return _fetch_archive_price_type("indexPriceKlines", symbol, start, end)
 
 
 def _fetch_funding(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -488,7 +511,18 @@ def build_futures_positioning_period_v332(
         except Exception:
             funding = pd.DataFrame()
 
-        if premium.empty and futures.empty and funding.empty:
+        # Archive names differ from REST names: public data uses
+        # premiumPriceKlines. mark/index provide an independent premium fallback.
+        try:
+            mark = _fetch_mark_5m(symbol, history_start, period_end)
+        except Exception:
+            mark = pd.DataFrame()
+        try:
+            index_price = _fetch_index_5m(symbol, history_start, period_end)
+        except Exception:
+            index_price = pd.DataFrame()
+
+        if premium.empty and futures.empty and funding.empty and (mark.empty or index_price.empty):
             continue
 
         frame = pd.DataFrame(index=spot5.index)
@@ -498,11 +532,21 @@ def build_futures_positioning_period_v332(
             if not futures.empty and "close" in futures
             else float("nan")
         )
-        frame["premium"] = (
-            premium["close"].reindex(frame.index)
-            if not premium.empty and "close" in premium
-            else float("nan")
-        )
+        if not premium.empty and "close" in premium:
+            frame["premium"] = premium["close"].reindex(frame.index)
+        elif (
+            not mark.empty
+            and not index_price.empty
+            and "close" in mark
+            and "close" in index_price
+        ):
+            mark_close = mark["close"].reindex(frame.index)
+            index_close = index_price["close"].reindex(frame.index)
+            frame["premium"] = (
+                mark_close / index_close.replace(0.0, float("nan")) - 1.0
+            )
+        else:
+            frame["premium"] = float("nan")
         frame["premium_change_15m"] = frame["premium"].diff(3)
         frame["basis"] = (
             frame["futures_close"]
@@ -654,6 +698,66 @@ def build_futures_positioning_period_v332(
                     raw_value=basis_change,
                     future_returns=raw_future,
                 )
+
+    return pd.DataFrame(rows)
+
+
+def futures_source_coverage_v334(
+    period_frame: pd.DataFrame,
+    *,
+    forward_days: int = 7,
+    warmup_hours: int = 48,
+) -> pd.DataFrame:
+    """Small diagnostic probe for source availability on a single period."""
+    if period_frame is None or period_frame.empty:
+        return pd.DataFrame()
+
+    selection_time = pd.Timestamp(period_frame["Selection time"].iloc[0])
+    period_end = selection_time + pd.Timedelta(days=int(forward_days))
+    history_start = selection_time - pd.Timedelta(hours=int(warmup_hours))
+    symbols = (
+        period_frame[period_frame["Trade selected"]]["Symbol"]
+        .astype(str)
+        .tolist()
+    )
+
+    rows = []
+    for symbol in symbols:
+        try:
+            futures = _fetch_futures_5m(symbol, history_start, period_end)
+        except Exception:
+            futures = pd.DataFrame()
+        try:
+            premium = _fetch_premium_5m(symbol, history_start, period_end)
+        except Exception:
+            premium = pd.DataFrame()
+        try:
+            mark = _fetch_mark_5m(symbol, history_start, period_end)
+        except Exception:
+            mark = pd.DataFrame()
+        try:
+            index_price = _fetch_index_5m(symbol, history_start, period_end)
+        except Exception:
+            index_price = pd.DataFrame()
+        try:
+            funding = _fetch_funding(
+                symbol,
+                history_start - pd.Timedelta(days=2),
+                period_end,
+            )
+        except Exception:
+            funding = pd.DataFrame()
+
+        rows.append(
+            {
+                "Symbol": symbol,
+                "Futures 5m bars": int(len(futures)),
+                "Premium bars": int(len(premium)),
+                "Mark bars": int(len(mark)),
+                "Index bars": int(len(index_price)),
+                "Funding records": int(len(funding)),
+            }
+        )
 
     return pd.DataFrame(rows)
 
