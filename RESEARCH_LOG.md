@@ -320,3 +320,24 @@ Continuous strength relationships only.
 No threshold optimization.
 Horizons: 3 / 5 / 10 / 15 / 30m.
 Strict period-cluster robustness before any purged walk-forward.
+
+
+---
+
+## 2026-09-30 — v3.3.2 Futures Lab — TECHNICAL FAILURE
+
+### Observed failure
+The Streamlit run returned zero futures-positioning observations.
+
+### Root cause
+The implementation coupled all futures sources inside one required fetch path.
+A failure of funding or another futures REST endpoint caused the entire symbol to be skipped.
+This was a technical implementation error, not a negative research result.
+
+### Fix in v3.3.3
+- funding is optional and independent;
+- premium, futures basis and funding can contribute separately;
+- USD-M futures klines and premium-index klines now fall back to Binance's public data archive when REST returns no data or is unavailable;
+- the research hypothesis and statistical gate are unchanged.
+
+The v3.3.2 zero-observation run must not be interpreted as NO_EDGE_FOUND.
