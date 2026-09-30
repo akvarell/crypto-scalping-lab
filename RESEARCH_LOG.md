@@ -341,3 +341,28 @@ This was a technical implementation error, not a negative research result.
 - the research hypothesis and statistical gate are unchanged.
 
 The v3.3.2 zero-observation run must not be interpreted as NO_EDGE_FOUND.
+
+
+---
+
+## 2026-09-30 — v3.3.3 Futures Lab — SECOND TECHNICAL FAILURE
+
+### Observed failure
+The rerun again returned zero futures-positioning observations.
+
+### Additional root cause found
+Binance uses different naming between REST and the public archive:
+- REST endpoint: premiumIndexKlines
+- public archive dataset: premiumPriceKlines
+
+The fallback incorrectly used the REST name as the archive directory name.
+
+### v3.3.4 fix
+- corrected archive dataset name to premiumPriceKlines;
+- added markPriceKlines + indexPriceKlines fallback so premium can be reconstructed independently;
+- kept futures klines, premium and funding independent;
+- added a source-coverage diagnostic that reports how many selected symbols actually returned:
+  futures bars / premium bars / mark+index / funding.
+
+No research gate, mechanism orientation or statistical threshold was changed.
+Zero-observation runs remain technical failures and are not evidence of no edge.
