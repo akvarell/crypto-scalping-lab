@@ -29,6 +29,7 @@ from src.futures_positioning_v332 import (
     analyze_futures_positioning_v332,
     build_futures_positioning_period_v332,
     clear_futures_v332_caches,
+    futures_source_coverage_v334,
 )
 from src.research_universe_v3 import build_research_universe_v3
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
@@ -106,7 +107,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v3.3.3")
+st.title("Crypto Scalping Lab v3.3.4")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -552,7 +553,7 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Futures Positioning & Basis Lab · v3.3.3")
+st.subheader("Futures Positioning & Basis Lab · v3.3.4")
 st.caption(
     "Genuinely different development-only data source: Binance USD-M perpetual premium, funding "
     "and futures-vs-spot basis. Hourly sampling is deterministic; no magnitude threshold is tuned. "
@@ -560,13 +561,13 @@ st.caption(
 )
 
 run_v332 = st.button(
-    "Run v3.3.3 Futures Positioning Lab",
+    "Run v3.3.4 Futures Positioning Lab",
     type="primary",
     use_container_width=True,
-    key="run_futures_positioning_v333",
+    key="run_futures_positioning_v334",
 )
 
-V332_PREFIX = "futures_positioning_v333"
+V332_PREFIX = "futures_positioning_v334"
 
 if run_v332:
     for key in [
@@ -625,7 +626,7 @@ if v332_phase == "universe":
         st.rerun()
     except Exception as exc:
         st.session_state[f"{V332_PREFIX}_phase"] = None
-        st.error(f"v3.3.3 universe build failed: {exc}")
+        st.error(f"v3.3.4 universe build failed: {exc}")
 
 elif v332_phase == "observations":
     universe_v332 = st.session_state.get(f"{V332_PREFIX}_universe")
@@ -637,7 +638,7 @@ elif v332_phase == "observations":
 
     if universe_v332 is None or not period_ids_v332:
         st.session_state[f"{V332_PREFIX}_phase"] = None
-        st.error("v3.3.3 checkpoint is missing. Run the lab again.")
+        st.error("v3.3.4 checkpoint is missing. Run the lab again.")
     elif period_index_v332 < len(period_ids_v332):
         current_period_v332 = period_ids_v332[period_index_v332]
         progress_v332 = st.progress(
@@ -690,7 +691,7 @@ elif v332_phase == "observations":
             _fetch_1m_cached.cache_clear()
             gc.collect()
             st.error(
-                f"v3.3.3 futures observation build failed on period "
+                f"v3.3.4 futures observation build failed on period "
                 f"{period_index_v332 + 1}/{len(period_ids_v332)}: {exc}"
             )
     else:
@@ -702,7 +703,62 @@ elif v332_phase == "observations":
 
         if observations_v332.empty:
             st.session_state[f"{V332_PREFIX}_phase"] = None
-            st.error("v3.3.3 produced no futures-positioning observations.")
+
+            # Diagnose actual source availability instead of returning an
+            # uninformative zero-observation error.
+            first_period_v334 = (
+                period_ids_v332[0] if period_ids_v332 else None
+            )
+            coverage_v334 = pd.DataFrame()
+            if first_period_v334 is not None:
+                probe_frame_v334 = universe_v332[
+                    universe_v332["Period"] == first_period_v334
+                ].copy()
+                try:
+                    coverage_v334 = futures_source_coverage_v334(
+                        probe_frame_v334,
+                        forward_days=7,
+                        warmup_hours=48,
+                    )
+                except Exception:
+                    coverage_v334 = pd.DataFrame()
+
+            if coverage_v334.empty:
+                st.error(
+                    "v3.3.4 still produced no futures-positioning observations, "
+                    "and the source probe could not retrieve coverage. This is a "
+                    "data-access/format problem, not a research result."
+                )
+            else:
+                total_symbols_v334 = len(coverage_v334)
+                futures_ok_v334 = int(
+                    (coverage_v334["Futures 5m bars"] > 0).sum()
+                )
+                premium_ok_v334 = int(
+                    (coverage_v334["Premium bars"] > 0).sum()
+                )
+                mark_index_ok_v334 = int(
+                    (
+                        (coverage_v334["Mark bars"] > 0)
+                        & (coverage_v334["Index bars"] > 0)
+                    ).sum()
+                )
+                funding_ok_v334 = int(
+                    (coverage_v334["Funding records"] > 0).sum()
+                )
+                st.error(
+                    "v3.3.4 source diagnostic: "
+                    f"futures {futures_ok_v334}/{total_symbols_v334}, "
+                    f"premium {premium_ok_v334}/{total_symbols_v334}, "
+                    f"mark+index {mark_index_ok_v334}/{total_symbols_v334}, "
+                    f"funding {funding_ok_v334}/{total_symbols_v334}. "
+                    "No research conclusion is allowed until at least one "
+                    "futures source has usable historical coverage."
+                )
+
+            clear_futures_v332_caches()
+            _fetch_1m_cached.cache_clear()
+            gc.collect()
         else:
             rows_v332 = list(
                 st.session_state.get(f"{V332_PREFIX}_stage_rows", [])
@@ -797,7 +853,7 @@ elif v332_phase == "observations":
             clear_futures_v332_caches()
             _fetch_1m_cached.cache_clear()
             gc.collect()
-            progress_v332.progress(1.0, text="v3.3.3 futures positioning lab complete")
+            progress_v332.progress(1.0, text="v3.3.4 futures positioning lab complete")
             st.rerun()
 
 v332_result = st.session_state.get(f"{V332_PREFIX}_result")
