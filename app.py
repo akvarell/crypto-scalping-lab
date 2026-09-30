@@ -31,6 +31,7 @@ from src.features_positioning_v332 import (
     clear_futures_v332_caches,
     futures_source_coverage_v334,
 )
+from src.forward_observer_v4 import FORWARD_START_UTC, run_forward_observer_v4
 from src.research_universe_v3 import build_research_universe_v3
 from src.rolling_universe import RESEARCH_ANCHOR_UTC, run_rolling_universe_validation
 from src.scalping_edge_map import _fetch_1m_cached, run_scalping_edge_map
@@ -107,9 +108,9 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v3.3.4")
+st.title("Crypto Scalping Lab v4.0")
 st.caption(
-    "Research/backtesting only · Public Coinbase market data · "
+    "Research and paper validation only · Public market data · "
     "No API keys and no real order execution."
 )
 
@@ -552,6 +553,89 @@ if universe_df is not None:
             "BTC correlation is intentionally separate. For a historical strategy test, the universe "
             "must be re-selected at each past date using only information available before that date."
         )
+
+st.subheader("Forward Paper Observer · v4.0")
+st.caption(
+    f"Frozen forward start: {FORWARD_START_UTC.isoformat()}. "
+    "The observer reconstructs only post-start causal events and never changes thresholds."
+)
+
+run_v4 = st.button(
+    "Run v4 Forward Observer",
+    type="primary",
+    use_container_width=True,
+    key="run_forward_observer_v40",
+)
+
+if run_v4:
+    try:
+        with st.spinner("Rebuilding the frozen forward universe and matured paper events..."):
+            v4_result_raw = run_forward_observer_v4()
+
+        compact_v4 = {
+            "status": v4_result_raw["status"],
+            "message": v4_result_raw["message"],
+            "start": v4_result_raw.get("start"),
+            "cutoff": v4_result_raw.get("cutoff"),
+            "universe_summary": v4_result_raw.get("universe_summary"),
+            "event_summary": v4_result_raw.get("event_summary", pd.DataFrame()),
+            "cost_stress": v4_result_raw.get("cost_stress", pd.DataFrame()),
+        }
+        st.session_state["forward_observer_v40"] = compact_v4
+        del v4_result_raw
+        _fetch_1m_cached.cache_clear()
+        gc.collect()
+    except Exception as exc:
+        _fetch_1m_cached.cache_clear()
+        gc.collect()
+        st.error(f"v4 Forward Observer failed: {exc}")
+
+v4_result = st.session_state.get("forward_observer_v40")
+
+if v4_result is not None:
+    status_v4 = str(v4_result.get("status", ""))
+    if status_v4 == "WAITING":
+        st.info(str(v4_result.get("message", "")))
+    else:
+        if status_v4 == "EVALUATABLE":
+            st.success(f"Forward Observer · {status_v4}")
+        else:
+            st.info(f"Forward Observer · {status_v4}")
+
+        st.write(str(v4_result.get("message", "")))
+
+        universe_summary_v4 = v4_result.get("universe_summary") or {}
+        trade_list_v4 = universe_summary_v4.get("trade_list", [])
+        if trade_list_v4:
+            st.caption("Frozen trade universe: " + ", ".join(trade_list_v4))
+
+        cost_v4 = v4_result.get("cost_stress")
+        if cost_v4 is not None and not cost_v4.empty:
+            cost12_v4 = cost_v4[cost_v4["Round-trip cost bps"] == 12.0].copy()
+            if not cost12_v4.empty:
+                shown_v4 = cost12_v4[
+                    [
+                        "Side",
+                        "Events",
+                        "Net avg bps",
+                        "Net median bps",
+                        "Positive periods",
+                    ]
+                ].copy()
+                shown_v4["Net avg bps"] = shown_v4["Net avg bps"].round(1)
+                shown_v4["Net median bps"] = shown_v4["Net median bps"].round(1)
+                st.dataframe(shown_v4, use_container_width=True, hide_index=True)
+
+        with st.expander("3/5/10/15m forward outcomes"):
+            event_summary_v4 = v4_result.get("event_summary")
+            if event_summary_v4 is None or event_summary_v4.empty:
+                st.caption("No matured events yet.")
+            else:
+                st.dataframe(
+                    event_summary_v4.round(1),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
 st.subheader("Futures Positioning & Basis Lab · v3.3.4")
 st.caption(
