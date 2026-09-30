@@ -17,7 +17,7 @@ from src.validation_v3 import cost_stress_v3
 
 # Clean forward start chosen after the historical research program was stopped.
 FORWARD_START_UTC = pd.Timestamp("2026-10-01T00:00:00Z")
-MIN_MATURE_MINUTES = 20
+MIN_MATURE_MINUTES = 30
 
 
 def _normalize_utc(value: str | pd.Timestamp) -> pd.Timestamp:
