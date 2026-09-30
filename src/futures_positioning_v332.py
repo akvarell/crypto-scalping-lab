@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import time
+import zipfile
 from functools import lru_cache
 
 import numpy as np
@@ -18,6 +20,154 @@ FAPI_BASES = [
     "https://fapi1.binance.com",
 ]
 HORIZONS = [3, 5, 10, 15, 30]
+
+
+ARCHIVE_BASE = "https://data.binance.vision/data/futures/um"
+
+
+def _archive_months(start: pd.Timestamp, end: pd.Timestamp) -> list[pd.Timestamp]:
+    first = pd.Timestamp(start).tz_convert("UTC").normalize().replace(day=1)
+    last = pd.Timestamp(end).tz_convert("UTC").normalize().replace(day=1)
+    return list(pd.date_range(first, last, freq="MS", tz="UTC"))
+
+
+def _parse_kline_zip(content: bytes) -> pd.DataFrame:
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+        names = [name for name in zf.namelist() if name.lower().endswith(".csv")]
+        if not names:
+            return pd.DataFrame()
+        raw = pd.read_csv(zf.open(names[0]), header=None)
+
+    if raw.empty or raw.shape[1] < 5:
+        return pd.DataFrame()
+
+    raw = raw.iloc[:, :12].copy()
+    raw.columns = [
+        "open_time", "open", "high", "low", "close", "volume",
+        "close_time", "quote_volume", "trades", "taker_base",
+        "taker_quote", "ignore",
+    ][: raw.shape[1]]
+
+    numeric_time = pd.to_numeric(raw["open_time"], errors="coerce")
+    raw = raw.loc[numeric_time.notna()].copy()
+    if raw.empty:
+        return pd.DataFrame()
+
+    numeric_time = pd.to_numeric(raw["open_time"], errors="coerce")
+    unit = "us" if float(numeric_time.abs().median()) > 1e14 else "ms"
+    raw["open_time"] = pd.to_datetime(numeric_time, unit=unit, utc=True)
+
+    for col in [x for x in ["open", "high", "low", "close", "volume", "quote_volume", "trades", "taker_base", "taker_quote"] if x in raw]:
+        raw[col] = pd.to_numeric(raw[col], errors="coerce")
+
+    return (
+        raw.drop_duplicates(subset=["open_time"])
+        .sort_values("open_time")
+        .set_index("open_time")
+    )
+
+
+def _archive_url(
+    data_type: str,
+    symbol: str,
+    interval: str,
+    stamp: pd.Timestamp,
+    *,
+    monthly: bool,
+) -> str:
+    symbol = symbol.upper()
+    if monthly:
+        label = stamp.strftime("%Y-%m")
+        return (
+            f"{ARCHIVE_BASE}/monthly/{data_type}/{symbol}/{interval}/"
+            f"{symbol}-{interval}-{label}.zip"
+        )
+    label = stamp.strftime("%Y-%m-%d")
+    return (
+        f"{ARCHIVE_BASE}/daily/{data_type}/{symbol}/{interval}/"
+        f"{symbol}-{interval}-{label}.zip"
+    )
+
+
+def _download_archive_frame(
+    data_type: str,
+    symbol: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    interval: str = "5m",
+) -> pd.DataFrame:
+    pieces: list[pd.DataFrame] = []
+    start = pd.Timestamp(start).tz_convert("UTC")
+    end = pd.Timestamp(end).tz_convert("UTC")
+    current_month = pd.Timestamp.now(tz="UTC").normalize().replace(day=1)
+
+    for month in _archive_months(start, end):
+        month_end = month + pd.offsets.MonthBegin(1)
+        overlap_start = max(start, month)
+        overlap_end = min(end, month_end)
+
+        month_frame = pd.DataFrame()
+        if month < current_month:
+            url = _archive_url(
+                data_type,
+                symbol,
+                interval,
+                month,
+                monthly=True,
+            )
+            try:
+                response = requests.get(
+                    url,
+                    timeout=30,
+                    headers={"User-Agent": "crypto-scalping-lab/3.3.3"},
+                )
+                if response.status_code == 200 and response.content:
+                    month_frame = _parse_kline_zip(response.content)
+            except Exception:
+                month_frame = pd.DataFrame()
+
+        if not month_frame.empty:
+            pieces.append(
+                month_frame[
+                    (month_frame.index >= overlap_start)
+                    & (month_frame.index < overlap_end)
+                ]
+            )
+            continue
+
+        for day in pd.date_range(
+            overlap_start.normalize(),
+            (overlap_end - pd.Timedelta(microseconds=1)).normalize(),
+            freq="D",
+            tz="UTC",
+        ):
+            url = _archive_url(
+                data_type,
+                symbol,
+                interval,
+                day,
+                monthly=False,
+            )
+            try:
+                response = requests.get(
+                    url,
+                    timeout=30,
+                    headers={"User-Agent": "crypto-scalping-lab/3.3.3"},
+                )
+                if response.status_code != 200 or not response.content:
+                    continue
+                daily = _parse_kline_zip(response.content)
+                if not daily.empty:
+                    pieces.append(daily)
+            except Exception:
+                continue
+
+    if not pieces:
+        return pd.DataFrame()
+
+    frame = pd.concat(pieces).sort_index()
+    frame = frame[~frame.index.duplicated(keep="last")]
+    return frame[(frame.index >= start) & (frame.index < end)].copy()
 
 
 def _fget(path: str, params: dict, timeout: int = 20):
@@ -177,11 +327,45 @@ def clear_futures_v332_caches() -> None:
 
 
 def _fetch_premium_5m(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
-    return _fetch_premium_5m_cached(symbol, start.isoformat(), end.isoformat()).copy()
+    try:
+        frame = _fetch_premium_5m_cached(
+            symbol,
+            start.isoformat(),
+            end.isoformat(),
+        ).copy()
+    except Exception:
+        frame = pd.DataFrame()
+
+    if frame.empty:
+        frame = _download_archive_frame(
+            "premiumIndexKlines",
+            symbol,
+            start,
+            end,
+            interval="5m",
+        )
+    return frame
 
 
 def _fetch_futures_5m(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
-    return _fetch_futures_5m_cached(symbol, start.isoformat(), end.isoformat()).copy()
+    try:
+        frame = _fetch_futures_5m_cached(
+            symbol,
+            start.isoformat(),
+            end.isoformat(),
+        ).copy()
+    except Exception:
+        frame = pd.DataFrame()
+
+    if frame.empty:
+        frame = _download_archive_frame(
+            "klines",
+            symbol,
+            start,
+            end,
+            interval="5m",
+        )
+    return frame
 
 
 def _fetch_funding(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -272,13 +456,6 @@ def build_futures_positioning_period_v332(
 
     for symbol in symbols:
         try:
-            premium = _fetch_premium_5m(symbol, history_start, period_end)
-            futures = _fetch_futures_5m(symbol, history_start, period_end)
-            funding = _fetch_funding(
-                symbol,
-                history_start - pd.Timedelta(days=2),
-                period_end,
-            )
             spot5 = _fetch_5m(symbol, history_start, period_end)
             spot1 = _fetch_1m(
                 symbol,
@@ -288,13 +465,45 @@ def build_futures_positioning_period_v332(
         except Exception:
             continue
 
-        if premium.empty or futures.empty or spot5.empty or spot1.empty:
+        if spot5.empty or spot1.empty:
+            continue
+
+        # Futures sources are independent. A failure in funding must never
+        # discard valid premium/basis observations for the same symbol.
+        try:
+            premium = _fetch_premium_5m(symbol, history_start, period_end)
+        except Exception:
+            premium = pd.DataFrame()
+
+        try:
+            futures = _fetch_futures_5m(symbol, history_start, period_end)
+        except Exception:
+            futures = pd.DataFrame()
+
+        try:
+            funding = _fetch_funding(
+                symbol,
+                history_start - pd.Timedelta(days=2),
+                period_end,
+            )
+        except Exception:
+            funding = pd.DataFrame()
+
+        if premium.empty and futures.empty and funding.empty:
             continue
 
         frame = pd.DataFrame(index=spot5.index)
         frame["spot_close"] = spot5["close"]
-        frame["futures_close"] = futures["close"].reindex(frame.index)
-        frame["premium"] = premium["close"].reindex(frame.index)
+        frame["futures_close"] = (
+            futures["close"].reindex(frame.index)
+            if not futures.empty and "close" in futures
+            else float("nan")
+        )
+        frame["premium"] = (
+            premium["close"].reindex(frame.index)
+            if not premium.empty and "close" in premium
+            else float("nan")
+        )
         frame["premium_change_15m"] = frame["premium"].diff(3)
         frame["basis"] = (
             frame["futures_close"]
