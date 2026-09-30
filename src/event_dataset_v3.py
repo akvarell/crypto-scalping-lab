@@ -267,6 +267,7 @@ def build_event_dataset_v3(
     *,
     forward_days: int = 7,
     warmup_hours: int = WARMUP_HOURS,
+    period_end_override: str | pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Build a causal v3 event dataset with a wide context basket.
 
@@ -298,6 +299,13 @@ def build_event_dataset_v3(
     for period, period_frame in universe_details.groupby("Period", sort=True):
         selection_time = pd.Timestamp(period_frame["Selection time"].iloc[0])
         period_end = selection_time + pd.Timedelta(days=int(forward_days))
+        if period_end_override is not None:
+            override = pd.Timestamp(period_end_override)
+            if override.tzinfo is None:
+                override = override.tz_localize("UTC")
+            else:
+                override = override.tz_convert("UTC")
+            period_end = min(period_end, override)
         fetch_start = selection_time - pd.Timedelta(hours=int(warmup_hours))
 
         context_symbols = (
