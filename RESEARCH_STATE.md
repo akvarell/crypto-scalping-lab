@@ -1,10 +1,10 @@
 # RESEARCH_STATE
 
 ## Current version
-v3.3.2 Futures Positioning & Basis Lab
+v3.3.3 Futures Positioning & Basis Lab
 
 ## Current status
-READY_TO_RUN
+READY_TO_RERUN_AFTER_TECHNICAL_FIX
 
 ## Last completed test
 Cross-Era Relative-z Replication v3.3.1
@@ -105,4 +105,4 @@ Design:
 Only a robust new candidate may advance to v3.4 Purged Walk-Forward.
 
 ## Latest research code commit
-ef70f188a905f7823b86e312deb322b75aacd86b
+001d7516ac21bccedd9c4feb060306d1a022fad1
