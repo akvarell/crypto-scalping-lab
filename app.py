@@ -25,7 +25,7 @@ from src.mean_reversion_lab import evaluate_mean_reversion_variants
 from src.one_shot_lab import run_one_shot_lab
 from src.optimizer import optimize_quick
 from src.relative_event_lab import run_relative_event_lab
-from src.futures_positioning_v332 import (
+from src.features_positioning_v332 import (
     analyze_futures_positioning_v332,
     build_futures_positioning_period_v332,
     clear_futures_v332_caches,
