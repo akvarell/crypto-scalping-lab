@@ -28,7 +28,7 @@ ARCHIVE_BASE = "https://data.binance.vision/data/futures/um"
 def _archive_months(start: pd.Timestamp, end: pd.Timestamp) -> list[pd.Timestamp]:
     first = pd.Timestamp(start).tz_convert("UTC").normalize().replace(day=1)
     last = pd.Timestamp(end).tz_convert("UTC").normalize().replace(day=1)
-    return list(pd.date_range(first, last, freq="MS", tz="UTC"))
+    return list(pd.date_range(first, last, freq="MS"))
 
 
 def _parse_kline_zip(content: bytes) -> pd.DataFrame:
@@ -139,7 +139,6 @@ def _download_archive_frame(
             overlap_start.normalize(),
             (overlap_end - pd.Timedelta(microseconds=1)).normalize(),
             freq="D",
-            tz="UTC",
         ):
             url = _archive_url(
                 data_type,
