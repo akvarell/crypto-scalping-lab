@@ -106,7 +106,7 @@ def render_trades(result: dict) -> None:
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
 
-st.title("Crypto Scalping Lab v3.3.2")
+st.title("Crypto Scalping Lab v3.3.3")
 st.caption(
     "Research/backtesting only · Public Coinbase market data · "
     "No API keys and no real order execution."
@@ -552,7 +552,7 @@ if universe_df is not None:
             "must be re-selected at each past date using only information available before that date."
         )
 
-st.subheader("Futures Positioning & Basis Lab · v3.3.2")
+st.subheader("Futures Positioning & Basis Lab · v3.3.3")
 st.caption(
     "Genuinely different development-only data source: Binance USD-M perpetual premium, funding "
     "and futures-vs-spot basis. Hourly sampling is deterministic; no magnitude threshold is tuned. "
@@ -560,13 +560,13 @@ st.caption(
 )
 
 run_v332 = st.button(
-    "Run v3.3.2 Futures Positioning Lab",
+    "Run v3.3.3 Futures Positioning Lab",
     type="primary",
     use_container_width=True,
-    key="run_futures_positioning_v332",
+    key="run_futures_positioning_v333",
 )
 
-V332_PREFIX = "futures_positioning_v332"
+V332_PREFIX = "futures_positioning_v333"
 
 if run_v332:
     for key in [
@@ -625,7 +625,7 @@ if v332_phase == "universe":
         st.rerun()
     except Exception as exc:
         st.session_state[f"{V332_PREFIX}_phase"] = None
-        st.error(f"v3.3.2 universe build failed: {exc}")
+        st.error(f"v3.3.3 universe build failed: {exc}")
 
 elif v332_phase == "observations":
     universe_v332 = st.session_state.get(f"{V332_PREFIX}_universe")
@@ -637,7 +637,7 @@ elif v332_phase == "observations":
 
     if universe_v332 is None or not period_ids_v332:
         st.session_state[f"{V332_PREFIX}_phase"] = None
-        st.error("v3.3.2 checkpoint is missing. Run the lab again.")
+        st.error("v3.3.3 checkpoint is missing. Run the lab again.")
     elif period_index_v332 < len(period_ids_v332):
         current_period_v332 = period_ids_v332[period_index_v332]
         progress_v332 = st.progress(
@@ -690,7 +690,7 @@ elif v332_phase == "observations":
             _fetch_1m_cached.cache_clear()
             gc.collect()
             st.error(
-                f"v3.3.2 futures observation build failed on period "
+                f"v3.3.3 futures observation build failed on period "
                 f"{period_index_v332 + 1}/{len(period_ids_v332)}: {exc}"
             )
     else:
@@ -702,7 +702,7 @@ elif v332_phase == "observations":
 
         if observations_v332.empty:
             st.session_state[f"{V332_PREFIX}_phase"] = None
-            st.error("v3.3.2 produced no futures-positioning observations.")
+            st.error("v3.3.3 produced no futures-positioning observations.")
         else:
             rows_v332 = list(
                 st.session_state.get(f"{V332_PREFIX}_stage_rows", [])
@@ -797,7 +797,7 @@ elif v332_phase == "observations":
             clear_futures_v332_caches()
             _fetch_1m_cached.cache_clear()
             gc.collect()
-            progress_v332.progress(1.0, text="v3.3.2 futures positioning lab complete")
+            progress_v332.progress(1.0, text="v3.3.3 futures positioning lab complete")
             st.rerun()
 
 v332_result = st.session_state.get(f"{V332_PREFIX}_result")
